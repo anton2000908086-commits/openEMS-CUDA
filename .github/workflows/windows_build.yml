@@ -1,0 +1,31 @@
+name: Windows Online Build
+
+on: push # Сборка будет запускаться автоматически при любом изменении кода
+
+jobs:
+  build:
+    runs-on: windows-latest # GitHub выделит виртуальную машину с Windows и Visual Studio
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install CUDA Toolkit
+      uses: Jimver/cuda-toolkit@v0.2 # Автоматически накатит CUDA в облаке
+
+    - name: Install vcpkg dependencies
+      run: |
+        vcpkg install boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml fparser vtk --triplet x64-windows
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+    - name: Build Project
+      run: cmake --build build --config Release
+
+    - name: Upload Result Artifact
+      uses: actions/upload-artifact@v4 # Этот шаг упакует и сохранит готовый .exe файл
+      with:
+        name: openEMS-Windows-CUDA
+        path: build/
