@@ -24,9 +24,10 @@ jobs:
         path: $env:VCPKG_INSTALLATION_ROOT/downloads
         key: vcpkg-downloads
 
-    - name: Install vcpkg dependencies
+        - name: Install vcpkg dependencies
       run: |
-        vcpkg install boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml fparser vtk --triplet x64-windows
+        vcpkg install boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml vtk --triplet x64-windows
+
 
     - name: Configure CMake
       run: |
