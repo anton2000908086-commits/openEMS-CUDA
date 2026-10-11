@@ -1,0 +1,191 @@
+name: Windows Online Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      cuda_version:
+        description: "CUDA Toolkit version"
+        required: false
+        default: "12.2.0"
+        type: string
+      cuda_architectures:
+        description: "CUDA architectures, e.g. 75;86;89 (RTX 20/30/40)"
+        required: false
+        default: "75;86;89"
+        type: string
+      csxcad_ref:
+        description: "CSXCAD branch/tag/commit (empty = default branch)"
+        required: false
+        default: ""
+        type: string
+      fparser_ref:
+        description: "fparser branch/tag/commit (empty = default branch)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TRIPLET: x64-windows-release
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure a git tag exists
+        shell: pwsh
+        run: |
+          git describe --tags 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) { git tag v0.0.35 }
+          exit 0
+
+      # This fork asks for VTK component names from older VTK releases and
+      # unconditionally includes VTK_USE_FILE. Adapt those two lines for VTK 9.
+      - name: Make openEMS CMake compatible with VTK 9
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $file = Join-Path $env:GITHUB_WORKSPACE 'CMakeLists.txt'
+          $src = Get-Content -Raw -LiteralPath $file
+          $oldComponents = 'find_package(VTK COMPONENTS vtkIOXML vtkIOGeometry vtkIOLegacy vtkIOPLY NO_MODULE REQUIRED)'
+          $newComponents = 'find_package(VTK COMPONENTS IOXML IOGeometry IOLegacy IOPLY NO_MODULE REQUIRED)'
+          if ($src.Contains($oldComponents)) {
+            $src = $src.Replace($oldComponents, $newComponents)
+          } elseif (-not $src.Contains($newComponents)) {
+            throw 'Could not find the expected VTK find_package line in CMakeLists.txt; review the patch for the current source.'
+          }
+          $oldInclude = 'include(${VTK_USE_FILE})'
+          $newInclude = "if(VTK_USE_FILE)`n  include(`${VTK_USE_FILE})`nendif()"
+          if ($src.Contains($oldInclude)) {
+            $src = $src.Replace($oldInclude, $newInclude)
+          }
+          Set-Content -LiteralPath $file -Value $src -NoNewline
+          Write-Host 'Prepared CMakeLists.txt for VTK 9 component names and optional VTK_USE_FILE.'
+
+      # A unique key allows each run to save an updated snapshot. The restore
+      # prefix brings back the newest prior snapshot, including previous archives.
+      - name: Restore vcpkg binary cache
+        id: restore_vcpkg_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-
+
+      - name: Install vcpkg dependencies
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          vcpkg version
+          vcpkg install boost-system boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml cgal "vtk[core]" --triplet $env:TRIPLET
+
+      # Save even after a failed install so packages built before the failure
+      # are not discarded. Cache entries are immutable, so each run gets a new key.
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: ${{ inputs.cuda_version || '12.2.0' }}
+          method: network
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build fparser and CSXCAD
+        shell: pwsh
+        env:
+          FPARSER_REF: ${{ inputs.fparser_ref }}
+          CSXCAD_REF: ${{ inputs.csxcad_ref }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
+          $deps = "$ws/deps"
+          $toolchain = "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+          git clone https://github.com/thliebig/fparser.git fparser
+          if ($env:FPARSER_REF) { git -C fparser checkout $env:FPARSER_REF }
+          cmake -S fparser -B fparser/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build fparser/build --config Release
+          cmake --install fparser/build --config Release
+
+          git clone https://github.com/thliebig/CSXCAD.git CSXCAD
+          if ($env:CSXCAD_REF) { git -C CSXCAD checkout $env:CSXCAD_REF }
+          cmake -S CSXCAD -B CSXCAD/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET" "-DCMAKE_INSTALL_PREFIX=$deps" "-DFPARSER_ROOT_DIR=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build CSXCAD/build --config Release
+          cmake --install CSXCAD/build --config Release
+
+      - name: Configure CMake
+        shell: pwsh
+        env:
+          CUDA_ARCHITECTURES: ${{ inputs.cuda_architectures || '75;86;89' }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
+          $cfg = @(
+            '-S', '.', '-B', 'build', '-G', 'Ninja',
+            '-DCMAKE_BUILD_TYPE=Release',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET",
+            "-DCMAKE_INSTALL_PREFIX=$ws/install",
+            "-DFPARSER_ROOT_DIR=$ws/deps",
+            "-DCSXCAD_ROOT_DIR=$ws/deps",
+            '-DWITH_CUDA=ON',
+            "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHITECTURES",
+            '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
+          )
+          cmake @cfg
+
+      - name: Build and install openEMS
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --build build --config Release
+          cmake --install build --config Release
+
+      - name: Copy runtime DLLs next to openEMS.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ws = $env:GITHUB_WORKSPACE
+          $bin = Join-Path $ws 'install\bin'
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          $runtimeDirs = @(
+            (Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\$env:TRIPLET\bin"),
+            (Join-Path $ws 'deps\bin')
+          )
+          foreach ($dir in $runtimeDirs) {
+            if (Test-Path -LiteralPath $dir) {
+              Get-ChildItem -LiteralPath $dir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
+                Copy-Item -Destination $bin -Force
+            }
+          }
+          # The CUDA Toolkit contains many development DLLs; the solver only
+          # needs the CUDA runtime DLL to be colocated with the executable.
+          $cudaBin = Join-Path $env:CUDA_PATH 'bin'
+          if (Test-Path -LiteralPath $cudaBin) {
+            Get-ChildItem -LiteralPath $cudaBin -Filter 'cudart64_*.dll' -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $bin -Force
+          }
+
+      - name: Upload Result Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openEMS-Windows-CUDA
+          path: ${{ github.workspace }}/install/
+          if-no-files-found: error
