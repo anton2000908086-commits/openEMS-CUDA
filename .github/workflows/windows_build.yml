@@ -1,46 +1,42 @@
 name: Windows Online Build
 
 on:
-  workflow_dispatch: # Позволит запускать сборку вручную кнопкой
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022 # Фиксируем версию Windows Server 2022
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Используем актуальную версию установщика CUDA
+    # Официальный экшен для установки CUDA напрямую с серверов NVIDIA
     - name: Install CUDA Toolkit
-      uses: Jimver/cuda-toolkit@v2.5
+      uses: NVIDIA/cuda-actions/cuda-installation@v0.1.2
       with:
-        cuda: '12.2.0' # Фиксируем стабильную версию CUDA
+        cuda-version: '12.2.0'
+        cuda-components: 'nvcc, cudart, cublas, cublas_dev'
 
-    # Кешируем vcpkg, чтобы не компилировать зависимости с нуля каждый раз
     - name: Restore vcpkg
       uses: actions/cache@v4
       with:
         path: $env:VCPKG_INSTALLATION_ROOT/downloads
         key: vcpkg-downloads
 
-    # Устанавливаем зависимости
     - name: Install vcpkg dependencies
       run: |
         vcpkg install boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml fparser vtk --triplet x64-windows
 
-    # Конфигурируем проект с генератором Ninja
     - name: Configure CMake
       run: |
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install"
 
-    # Собираем проект
     - name: Build Project
       run: |
         cmake --build build --config Release
         cmake --install build
 
-    # Загружаем артефакт (готовую папку install с .exe и всеми файлами)
     - name: Upload Result Artifact
       uses: actions/upload-artifact@v4
       with:
