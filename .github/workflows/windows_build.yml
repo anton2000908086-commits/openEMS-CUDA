@@ -5,18 +5,18 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022 # Фиксируем версию Windows Server 2022
+    runs-on: windows-2022
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Официальный экшен для установки CUDA напрямую с серверов NVIDIA
+    # Используем проверенный и точно существующий релиз экшена Jimver/cuda-toolkit
     - name: Install CUDA Toolkit
-      uses: NVIDIA/cuda-actions/cuda-installation@v0.1.2
+      uses: Jimver/cuda-toolkit@v0.2.29
       with:
-        cuda-version: '12.2.0'
-        cuda-components: 'nvcc, cudart, cublas, cublas_dev'
+        cuda: '12.2.0'
+        method: 'network'
 
     - name: Restore vcpkg
       uses: actions/cache@v4
