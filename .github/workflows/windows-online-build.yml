@@ -71,58 +71,86 @@ jobs:
           Set-Content -LiteralPath $file -Value $src -NoNewline
           Write-Host 'Prepared CMakeLists.txt for VTK 9 component names and optional VTK_USE_FILE.'
 
-      # CUDA 12.2 supports MSVC 19.3x (Visual Studio 2022 17.x toolset 14.3x),
-      # but the hosted windows-2022 image may default to a newer 19.4x compiler.
-      # Install the 14.38 toolset side-by-side so nvcc uses a supported host compiler.
+      # Prefer MSVC 14.38 for CUDA 12.2. The current hosted image may no longer
+      # include this side-by-side toolset, so try the supported VS Installer CLI
+      # and fall back explicitly if installation is unavailable.
       - name: Install MSVC 14.38 toolset for CUDA 12.2
+        id: install_msvc
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
+          $setup = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
           if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe was not found: $vswhere" }
-          if (-not (Test-Path -LiteralPath $installer)) { throw "Visual Studio Installer was not found: $installer" }
 
           $vsPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
-          if (-not $vsPath) { throw 'Could not find a Visual Studio 2022 installation with the C++ x64/x86 tools.' }
+          if (-not $vsPath) { throw 'Could not find Visual Studio with the C++ x64/x86 tools.' }
           $vsPath = $vsPath.Trim()
-          Write-Host "Visual Studio installation: $vsPath"
-
           $toolsetsPath = Join-Path $vsPath 'VC\Tools\MSVC'
-          $existing = Get-ChildItem -LiteralPath $toolsetsPath -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like '14.38.*' } | Select-Object -First 1
-          if ($existing) {
-            Write-Host "MSVC 14.38 is already installed: $($existing.FullName)"
-          } else {
-            $component = 'Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64'
-            Write-Host "Installing Visual Studio component $component ..."
-            & $installer modify --installPath $vsPath --add $component --quiet --wait --norestart --nocache
-            if ($LASTEXITCODE -ne 0) { throw "Visual Studio Installer failed with exit code $LASTEXITCODE" }
-          }
+          Write-Host "Visual Studio installation: $vsPath"
 
           $installed = Get-ChildItem -LiteralPath $toolsetsPath -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like '14.38.*' } | Select-Object -First 1
-          if (-not $installed) { throw 'MSVC 14.38 was not installed; CUDA 12.2 cannot use the current default compiler.' }
-          Write-Host "Confirmed MSVC toolset: $($installed.FullName)"
+          if (-not $installed -and (Test-Path -LiteralPath $setup)) {
+            $component = 'Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64'
+            Write-Host "Attempting to install Visual Studio component $component using setup.exe ..."
+            $installOutput = & $setup modify --installPath $vsPath --add $component --quiet --norestart 2>&1
+            $installerExitCode = $LASTEXITCODE
+            $installOutput | ForEach-Object { Write-Host $_ }
+            Write-Host "Visual Studio Installer exit code: $installerExitCode"
+            $installed = Get-ChildItem -LiteralPath $toolsetsPath -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like '14.38.*' } | Select-Object -First 1
+          }
+
+          if ($installed) {
+            Write-Host "Using supported MSVC toolset: $($installed.FullName)"
+            Add-Content -Path $env:GITHUB_ENV -Value 'MSVC_TOOLSET_MODE=legacy'
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'mode=legacy'
+          } else {
+            Write-Warning 'MSVC 14.38 is not available. Falling back to the runner default compiler with nvcc --allow-unsupported-compiler. This bypasses CUDA version validation and does not guarantee a successful or correct build.'
+            Add-Content -Path $env:GITHUB_ENV -Value 'MSVC_TOOLSET_MODE=fallback'
+            Add-Content -Path $env:GITHUB_ENV -Value 'NVCC_PREPEND_FLAGS=--allow-unsupported-compiler'
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'mode=fallback'
+          }
 
       - name: Set up MSVC 14.38 environment
+        if: steps.install_msvc.outputs.mode == 'legacy'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
           vsversion: '2022'
           toolset: '14.38'
 
+      - name: Set up default MSVC environment
+        if: steps.install_msvc.outputs.mode == 'fallback'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+
       - name: Verify selected MSVC compiler
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $clCommand = Get-Command cl.exe -ErrorAction Stop
+          Write-Host "MSVC mode: $env:MSVC_TOOLSET_MODE"
           Write-Host "cl.exe: $($clCommand.Source)"
           $clText = (& cl.exe /Bv 2>&1 | Out-String)
           Write-Host $clText
-          if ($clText -notmatch 'Version\s+19\.38\.') {
-            throw 'Expected MSVC 19.38 (toolset 14.38), compatible with CUDA 12.2. See compiler output above.'
+          if ($env:MSVC_TOOLSET_MODE -eq 'legacy' -and $clText -notmatch 'Version\s+19\.38\.') {
+            throw 'MSVC 14.38 was selected but cl.exe is not version 19.38. See compiler output above.'
           }
+          if ($env:MSVC_TOOLSET_MODE -eq 'fallback') {
+            Write-Warning "Using the default compiler. NVCC_PREPEND_FLAGS=$env:NVCC_PREPEND_FLAGS"
+          }
+
+      # Create the directory even if a previous step fails, so the final cache
+      # save step does not fail merely because the path was never created.
+      - name: Prepare vcpkg binary cache directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
       # A unique key allows each run to save an updated snapshot. The restore
       # prefix brings back the newest prior snapshot, including previous archives.
@@ -159,8 +187,12 @@ jobs:
           Write-Host "Using host compiler: $($clCommand.Source)"
           $clText = (& cl.exe /Bv 2>&1 | Out-String)
           Write-Host $clText
-          if ($clText -notmatch 'Version\s+19\.38\.') {
-            throw 'CUDA 12.2 requires a supported MSVC 19.3x compiler; MSVC 19.38 was expected.'
+          if ($env:MSVC_TOOLSET_MODE -eq 'legacy' -and $clText -notmatch 'Version\s+19\.38\.') {
+            throw 'MSVC 14.38 was selected but the active compiler is not version 19.38.'
+          }
+          if ($env:MSVC_TOOLSET_MODE -eq 'fallback') {
+            Write-Warning 'CUDA 12.2 is being used with an unsupported host compiler. The allow-unsupported flag only bypasses nvcc version validation.'
+            Write-Host "NVCC_PREPEND_FLAGS=$env:NVCC_PREPEND_FLAGS"
           }
 
       - name: Build fparser and CSXCAD
