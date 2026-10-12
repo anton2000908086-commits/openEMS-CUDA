@@ -71,6 +71,59 @@ jobs:
           Set-Content -LiteralPath $file -Value $src -NoNewline
           Write-Host 'Prepared CMakeLists.txt for VTK 9 component names and optional VTK_USE_FILE.'
 
+      # CUDA 12.2 supports MSVC 19.3x (Visual Studio 2022 17.x toolset 14.3x),
+      # but the hosted windows-2022 image may default to a newer 19.4x compiler.
+      # Install the 14.38 toolset side-by-side so nvcc uses a supported host compiler.
+      - name: Install MSVC 14.38 toolset for CUDA 12.2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe was not found: $vswhere" }
+          if (-not (Test-Path -LiteralPath $installer)) { throw "Visual Studio Installer was not found: $installer" }
+
+          $vsPath = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+          if (-not $vsPath) { throw 'Could not find a Visual Studio 2022 installation with the C++ x64/x86 tools.' }
+          $vsPath = $vsPath.Trim()
+          Write-Host "Visual Studio installation: $vsPath"
+
+          $toolsetsPath = Join-Path $vsPath 'VC\Tools\MSVC'
+          $existing = Get-ChildItem -LiteralPath $toolsetsPath -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '14.38.*' } | Select-Object -First 1
+          if ($existing) {
+            Write-Host "MSVC 14.38 is already installed: $($existing.FullName)"
+          } else {
+            $component = 'Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64'
+            Write-Host "Installing Visual Studio component $component ..."
+            & $installer modify --installPath $vsPath --add $component --quiet --wait --norestart --nocache
+            if ($LASTEXITCODE -ne 0) { throw "Visual Studio Installer failed with exit code $LASTEXITCODE" }
+          }
+
+          $installed = Get-ChildItem -LiteralPath $toolsetsPath -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '14.38.*' } | Select-Object -First 1
+          if (-not $installed) { throw 'MSVC 14.38 was not installed; CUDA 12.2 cannot use the current default compiler.' }
+          Write-Host "Confirmed MSVC toolset: $($installed.FullName)"
+
+      - name: Set up MSVC 14.38 environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+          toolset: '14.38'
+
+      - name: Verify selected MSVC compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clCommand = Get-Command cl.exe -ErrorAction Stop
+          Write-Host "cl.exe: $($clCommand.Source)"
+          $clText = (& cl.exe /Bv 2>&1 | Out-String)
+          Write-Host $clText
+          if ($clText -notmatch 'Version\s+19\.38\.') {
+            throw 'Expected MSVC 19.38 (toolset 14.38), compatible with CUDA 12.2. See compiler output above.'
+          }
+
       # A unique key allows each run to save an updated snapshot. The restore
       # prefix brings back the newest prior snapshot, including previous archives.
       - name: Restore vcpkg binary cache
@@ -96,8 +149,19 @@ jobs:
           cuda: ${{ inputs.cuda_version || '12.2.0' }}
           method: network
 
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify CUDA and host compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+          nvcc --version
+          $clCommand = Get-Command cl.exe -ErrorAction Stop
+          Write-Host "Using host compiler: $($clCommand.Source)"
+          $clText = (& cl.exe /Bv 2>&1 | Out-String)
+          Write-Host $clText
+          if ($clText -notmatch 'Version\s+19\.38\.') {
+            throw 'CUDA 12.2 requires a supported MSVC 19.3x compiler; MSVC 19.38 was expected.'
+          }
 
       - name: Build fparser and CSXCAD
         shell: pwsh
