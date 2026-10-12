@@ -206,7 +206,8 @@ jobs:
             "-DVCPKG_HOST_TRIPLET=$env:TRIPLET",
             '-DVCPKG_MANIFEST_MODE=OFF',
             '-DVCPKG_MANIFEST_INSTALL=OFF',
-            "-DCMAKE_INSTALL_PREFIX=$ws/install",
+            # NOT "install": the repo has a file named INSTALL in its root, and Windows paths are case-insensitive
+            "-DCMAKE_INSTALL_PREFIX=$ws/dist",
             "-DFPARSER_ROOT_DIR=$ws/deps",
             "-DCSXCAD_ROOT_DIR=$ws/deps",
             '-DWITH_CUDA=ON',
@@ -215,17 +216,25 @@ jobs:
           )
           cmake @cfg
 
-      # The build output is tee'd to build.log so the next step can print only the real errors:
-      # ninja runs jobs in parallel, so the failing command is often far above the last log lines.
-      - name: Build and install openEMS
+      # Build and install are separate steps with their own logs: ninja runs jobs in parallel, so the
+      # failing command is often far above the last log lines, and "install" can fail on its own.
+      - name: Build openEMS
+        id: build
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           cmake --build build --config Release 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --install build --config Release
 
-      - name: Show build errors
+      - name: Install openEMS
+        id: install
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --install build --config Release 2>&1 | Tee-Object -FilePath install.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Show build and install errors
         if: failure()
         shell: pwsh
         run: |
@@ -234,14 +243,52 @@ jobs:
             Select-String -Path build.log -CaseSensitive -Pattern 'FAILED:|fatal error|error C\d+|: error|LNK\d+|nvcc fatal|Error \d+$' -Context 0,2 |
               Select-Object -First 40 | ForEach-Object { $_.ToString() }
           }
+          if (Test-Path install.log) {
+            Write-Host '===== tail of install.log ====='
+            Get-Content install.log -Tail 40
+          }
           exit 0
 
-      - name: Copy runtime DLLs next to openEMS.exe
+      # Runs even if "install" failed, so the binaries from the build tree are never lost.
+      - name: Collect binaries and runtime DLLs from the build tree
+        if: always() && steps.build.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $ws = $env:GITHUB_WORKSPACE
-          $bin = Join-Path $ws 'install\bin'
+          $bundle = Join-Path $ws 'bundle'
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          # build outputs; skip CMake's own compiler-detection files
+          Get-ChildItem -Path (Join-Path $ws 'build') -Recurse -File -Include '*.exe','*.dll' |
+            Where-Object { $_.FullName -notmatch '\\CMakeFiles\\' } |
+            Copy-Item -Destination $bundle -Force
+          # runtime DLLs: vcpkg, fparser/CSXCAD, CUDA runtime
+          $runtimeDirs = @(
+            (Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\$env:TRIPLET\bin"),
+            (Join-Path $ws 'deps\bin')
+          )
+          foreach ($dir in $runtimeDirs) {
+            if (Test-Path -LiteralPath $dir) {
+              Get-ChildItem -LiteralPath $dir -Filter '*.dll' -File -ErrorAction SilentlyContinue |
+                Copy-Item -Destination $bundle -Force
+            }
+          }
+          $cudaBin = Join-Path $env:CUDA_PATH 'bin'
+          if (Test-Path -LiteralPath $cudaBin) {
+            Get-ChildItem -LiteralPath $cudaBin -Filter 'cudart64_*.dll' -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination $bundle -Force
+          }
+          Write-Host '===== bundle contents ====='
+          Get-ChildItem -LiteralPath $bundle | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
+          exit 0
+
+      - name: Copy runtime DLLs next to openEMS.exe in the dist tree
+        if: steps.install.outcome == 'success'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ws = $env:GITHUB_WORKSPACE
+          $bin = Join-Path $ws 'dist\bin'
           New-Item -ItemType Directory -Force -Path $bin | Out-Null
           $runtimeDirs = @(
             (Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\$env:TRIPLET\bin"),
@@ -272,8 +319,17 @@ jobs:
           key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Result Artifact
+        if: steps.install.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: openEMS-Windows-CUDA
-          path: ${{ github.workspace }}/install/
+          path: ${{ github.workspace }}/dist/
           if-no-files-found: error
+
+      - name: Upload build-tree binaries
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openEMS-Windows-CUDA-buildtree
+          path: ${{ github.workspace }}/bundle/
+          if-no-files-found: warn
