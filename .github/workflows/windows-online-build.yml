@@ -1,4 +1,4 @@
-name: Windows Online Build 2
+name: Windows Online Build
 
 on:
   workflow_dispatch:
@@ -119,9 +119,11 @@ jobs:
 
           git clone https://github.com/thliebig/fparser.git fparser
           if ($env:FPARSER_REF) { git -C fparser checkout $env:FPARSER_REF }
-          cmake -S fparser -B fparser/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake -S fparser -B fparser/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON "-DCMAKE_INSTALL_PREFIX=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build fparser/build --config Release
           cmake --install fparser/build --config Release
+          Write-Host 'Installed fparser files:'
+          Get-ChildItem -Path "$deps/include", "$deps/lib", "$deps/bin" -ErrorAction SilentlyContinue -Recurse -File | Select-Object -ExpandProperty FullName
 
           git clone https://github.com/thliebig/CSXCAD.git CSXCAD
           if ($env:CSXCAD_REF) { git -C CSXCAD checkout $env:CSXCAD_REF }
