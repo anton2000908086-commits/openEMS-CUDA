@@ -192,6 +192,9 @@ jobs:
         shell: pwsh
         env:
           CUDA_ARCHITECTURES: ${{ inputs.cuda_architectures || '75;86;89' }}
+          # MSVC does not treat the C++ words and/or/not as operators unless <iso646.h> is included
+          # (or /permissive- is used, which breaks other things). CMake appends CXXFLAGS to its defaults.
+          CXXFLAGS: /FIiso646.h
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
@@ -212,12 +215,26 @@ jobs:
           )
           cmake @cfg
 
+      # The build output is tee'd to build.log so the next step can print only the real errors:
+      # ninja runs jobs in parallel, so the failing command is often far above the last log lines.
       - name: Build and install openEMS
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          cmake --build build --config Release
+          cmake --build build --config Release 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --install build --config Release
+
+      - name: Show build errors
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path build.log) {
+            Write-Host '===== errors from build.log ====='
+            Select-String -Path build.log -CaseSensitive -Pattern 'FAILED:|fatal error|error C\d+|: error|LNK\d+|nvcc fatal|Error \d+$' -Context 0,2 |
+              Select-Object -First 40 | ForEach-Object { $_.ToString() }
+          }
+          exit 0
 
       - name: Copy runtime DLLs next to openEMS.exe
         shell: pwsh
