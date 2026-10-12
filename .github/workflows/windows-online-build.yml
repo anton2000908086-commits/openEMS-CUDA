@@ -1,4 +1,4 @@
-name: Windows Online Build 2
+name: Windows Online Build
 
 on:
   workflow_dispatch:
@@ -29,6 +29,7 @@ permissions:
 
 env:
   TRIPLET: x64-windows-release
+  # Keep the existing binary-cache directory so previous cached packages remain reusable.
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
 
 jobs:
@@ -87,16 +88,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           vcpkg version
-          vcpkg install boost-system boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml cgal "vtk[core]" --triplet $env:TRIPLET
-
-      # Save even after a failed install so packages built before the failure
-      # are not discarded. Cache entries are immutable, so each run gets a new key.
-      - name: Save vcpkg binary cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          vcpkg install boost-system boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml cgal "vtk[core]" --triplet $env:TRIPLET --host-triplet $env:TRIPLET
 
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.29
@@ -110,6 +102,13 @@ jobs:
       - name: Build fparser and CSXCAD
         shell: pwsh
         env:
+          # Match the compiler environment used by the current CSXCAD Windows CI.
+          # Scope these to this step to avoid unnecessarily perturbing the already-populated
+          # binary-cache ABI keys in the earlier vcpkg install step.
+          CC: cl
+          CXX: cl
+          CFLAGS: /D_WIN32_WINNT=0x0601
+          CXXFLAGS: /D_WIN32_WINNT=0x0601
           FPARSER_REF: ${{ inputs.fparser_ref }}
           CSXCAD_REF: ${{ inputs.csxcad_ref }}
         run: |
@@ -126,7 +125,10 @@ jobs:
 
           git clone https://github.com/thliebig/CSXCAD.git CSXCAD
           if ($env:CSXCAD_REF) { git -C CSXCAD checkout $env:CSXCAD_REF }
-          cmake -S CSXCAD -B CSXCAD/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET" "-DCMAKE_INSTALL_PREFIX=$deps" "-DFPARSER_ROOT_DIR=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          # Dependencies have already been installed by the explicit vcpkg step above.
+          # Disable CSXCAD's vcpkg.json manifest auto-install so CMake uses that shared install
+          # instead of rebuilding a second dependency tree under CSXCAD/build/vcpkg_installed.
+          cmake -S CSXCAD -B CSXCAD/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET" "-DVCPKG_HOST_TRIPLET=$env:TRIPLET" -DVCPKG_MANIFEST_MODE=OFF -DVCPKG_MANIFEST_INSTALL=OFF "-DCMAKE_INSTALL_PREFIX=$deps" "-DFPARSER_ROOT_DIR=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build CSXCAD/build --config Release
           cmake --install CSXCAD/build --config Release
 
@@ -142,6 +144,9 @@ jobs:
             '-DCMAKE_BUILD_TYPE=Release',
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
             "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET",
+            "-DVCPKG_HOST_TRIPLET=$env:TRIPLET",
+            '-DVCPKG_MANIFEST_MODE=OFF',
+            '-DVCPKG_MANIFEST_INSTALL=OFF',
             "-DCMAKE_INSTALL_PREFIX=$ws/install",
             "-DFPARSER_ROOT_DIR=$ws/deps",
             "-DCSXCAD_ROOT_DIR=$ws/deps",
@@ -182,6 +187,16 @@ jobs:
             Get-ChildItem -LiteralPath $cudaBin -Filter 'cudart64_*.dll' -File -ErrorAction SilentlyContinue |
               Copy-Item -Destination $bin -Force
           }
+
+      # Save at the end, not immediately after the first vcpkg install: CSXCAD/openEMS
+      # configuration may add more archives to the binary cache. always() preserves them
+      # even if a later configure/build step fails.
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Result Artifact
         uses: actions/upload-artifact@v4
