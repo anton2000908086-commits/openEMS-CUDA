@@ -1,4 +1,4 @@
-name: Windows Online Build
+name: Windows Online Build 2
 
 on:
   workflow_dispatch:
