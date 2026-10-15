@@ -1,0 +1,460 @@
+name: Windows Online Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      cuda_version:
+        description: "CUDA Toolkit version"
+        required: false
+        default: "12.6.3"
+        type: string
+      cuda_architectures:
+        description: "CUDA architectures, e.g. 75;86;89 (RTX 20/30/40)"
+        required: false
+        default: "75;86;89"
+        type: string
+      csxcad_ref:
+        description: "CSXCAD branch/tag/commit (empty = default branch)"
+        required: false
+        default: ""
+        type: string
+      fparser_ref:
+        description: "fparser branch/tag/commit (empty = default branch)"
+        required: false
+        default: ""
+        type: string
+      official_version:
+        description: "Official openEMS release tag to repackage (a bin folder with the CUDA openEMS.exe is added)"
+        required: false
+        default: "v0.37.0"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TRIPLET: x64-windows-release
+  # Keep the existing binary-cache directory so previous cached packages remain reusable.
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure a git tag exists
+        shell: pwsh
+        run: |
+          git describe --tags 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) { git tag v0.0.35 }
+          exit 0
+
+      # This fork asks for VTK component names from older VTK releases and
+      # unconditionally includes VTK_USE_FILE. Adapt those two lines for VTK 9.
+      - name: Make openEMS CMake compatible with VTK 9
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $file = Join-Path $env:GITHUB_WORKSPACE 'CMakeLists.txt'
+          $src = Get-Content -Raw -LiteralPath $file
+          $oldComponents = 'find_package(VTK COMPONENTS vtkIOXML vtkIOGeometry vtkIOLegacy vtkIOPLY NO_MODULE REQUIRED)'
+          $newComponents = 'find_package(VTK COMPONENTS IOXML IOGeometry IOLegacy IOPLY NO_MODULE REQUIRED)'
+          if ($src.Contains($oldComponents)) {
+            $src = $src.Replace($oldComponents, $newComponents)
+          } elseif (-not $src.Contains($newComponents)) {
+            throw 'Could not find the expected VTK find_package line in CMakeLists.txt; review the patch for the current source.'
+          }
+          $oldInclude = 'include(${VTK_USE_FILE})'
+          $newInclude = "if(VTK_USE_FILE)`n  include(`${VTK_USE_FILE})`nendif()"
+          if ($src.Contains($oldInclude)) {
+            $src = $src.Replace($oldInclude, $newInclude)
+          }
+          Set-Content -LiteralPath $file -Value $src -NoNewline
+          Write-Host 'Prepared CMakeLists.txt for VTK 9 component names and optional VTK_USE_FILE.'
+
+      # The hosted windows-2022 image ships a recent MSVC (19.44). CUDA 12.5+ accepts it.
+      # For older CUDA the compatibility overrides are enabled in the "Configure nvcc" step below.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+
+      # Create the directory even if a previous step fails, so the final cache
+      # save step does not fail merely because the path was never created.
+      - name: Prepare vcpkg binary cache directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      # A unique key allows each run to save an updated snapshot. The restore
+      # prefix brings back the newest prior snapshot, including previous archives.
+      - name: Restore vcpkg binary cache
+        id: restore_vcpkg_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-
+
+      - name: Install vcpkg dependencies
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          vcpkg version
+          vcpkg install boost-system boost-thread boost-date-time boost-serialization boost-chrono boost-program-options hdf5 tinyxml cgal "vtk[core]" --triplet $env:TRIPLET --host-triplet $env:TRIPLET
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: ${{ inputs.cuda_version || '12.6.3' }}
+          method: network
+
+      # CUDA < 12.5 does not know the current MSVC: nvcc needs --allow-unsupported-compiler and
+      # the MSVC STL needs _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH (error STL1002).
+      # NVCC_PREPEND_FLAGS is read by nvcc itself, so it also applies during CMake's compiler detection.
+      - name: Configure nvcc for the installed MSVC
+        shell: pwsh
+        env:
+          CUDA_VERSION: ${{ inputs.cuda_version || '12.6.3' }}
+        run: |
+          if ([version]$env:CUDA_VERSION -lt [version]'12.5.0') {
+            Write-Warning "CUDA $env:CUDA_VERSION predates the installed MSVC; enabling compatibility overrides. This can still fail or misbehave; prefer CUDA 12.5+."
+            Add-Content -Path $env:GITHUB_ENV -Value 'NVCC_PREPEND_FLAGS=--allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH'
+          }
+          exit 0
+
+      # The repo's plain C++ files include <cuda_runtime.h> when WITH_CUDA is on, but the CMake
+      # target does not add the toolkit include dir on Windows (error C1083). cl.exe and link.exe
+      # read INCLUDE and LIB from the environment, so add the CUDA dirs there for the next steps.
+      - name: Add CUDA include and lib dirs for host C++ code
+        shell: pwsh
+        run: |
+          $cuda = $env:CUDA_PATH
+          if (-not $cuda) { throw 'CUDA_PATH is not set' }
+          Add-Content -Path $env:GITHUB_ENV -Value "INCLUDE=$env:INCLUDE;$cuda\include"
+          Add-Content -Path $env:GITHUB_ENV -Value "LIB=$env:LIB;$cuda\lib\x64"
+          Test-Path "$cuda\include\cuda_runtime.h"
+          Test-Path "$cuda\lib\x64\cudart.lib"
+          exit 0
+
+      - name: Verify CUDA and host compiler
+        shell: pwsh
+        run: |
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+          nvcc --version
+          $clCommand = Get-Command cl.exe -ErrorAction Stop
+          Write-Host "Host compiler: $($clCommand.Source)"
+          # cl.exe without a source file prints its banner but exits non-zero (D8003),
+          # and the step would inherit that exit code; so reset it explicitly.
+          $clText = (& cl.exe 2>&1 | Out-String)
+          Write-Host $clText
+          Write-Host "NVCC_PREPEND_FLAGS=$env:NVCC_PREPEND_FLAGS"
+          exit 0
+
+      - name: Build fparser and CSXCAD
+        shell: pwsh
+        env:
+          # Match the compiler environment used by the current CSXCAD Windows CI.
+          # Scope these to this step to avoid unnecessarily perturbing the already-populated
+          # binary-cache ABI keys in the earlier vcpkg install step.
+          CC: cl
+          CXX: cl
+          CFLAGS: /D_WIN32_WINNT=0x0601
+          CXXFLAGS: /D_WIN32_WINNT=0x0601
+          FPARSER_REF: ${{ inputs.fparser_ref }}
+          CSXCAD_REF: ${{ inputs.csxcad_ref }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
+          $deps = "$ws/deps"
+          $toolchain = "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+          git clone https://github.com/thliebig/fparser.git fparser
+          if ($env:FPARSER_REF) { git -C fparser checkout $env:FPARSER_REF }
+          cmake -S fparser -B fparser/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON "-DCMAKE_INSTALL_PREFIX=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build fparser/build --config Release
+          cmake --install fparser/build --config Release
+          Write-Host 'Installed fparser files:'
+          Get-ChildItem -Path "$deps/include", "$deps/lib", "$deps/bin" -ErrorAction SilentlyContinue -Recurse -File | Select-Object -ExpandProperty FullName
+
+          git clone https://github.com/thliebig/CSXCAD.git CSXCAD
+          if ($env:CSXCAD_REF) { git -C CSXCAD checkout $env:CSXCAD_REF }
+          # Dependencies have already been installed by the explicit vcpkg step above.
+          # Disable CSXCAD's vcpkg.json manifest auto-install so CMake uses that shared install
+          # instead of rebuilding a second dependency tree under CSXCAD/build/vcpkg_installed.
+          cmake -S CSXCAD -B CSXCAD/build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_TOOLCHAIN_FILE=$toolchain" "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET" "-DVCPKG_HOST_TRIPLET=$env:TRIPLET" -DVCPKG_MANIFEST_MODE=OFF -DVCPKG_MANIFEST_INSTALL=OFF "-DCMAKE_INSTALL_PREFIX=$deps" "-DFPARSER_ROOT_DIR=$deps" -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build CSXCAD/build --config Release
+          cmake --install CSXCAD/build --config Release
+
+      - name: Configure CMake
+        shell: pwsh
+        env:
+          CUDA_ARCHITECTURES: ${{ inputs.cuda_architectures || '75;86;89' }}
+          # MSVC does not treat the C++ words and/or/not as operators unless <iso646.h> is included
+          # (or /permissive- is used, which breaks other things). CMake appends CXXFLAGS to its defaults.
+          CXXFLAGS: /FIiso646.h
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ws = $env:GITHUB_WORKSPACE -replace '\\','/'
+          $cfg = @(
+            '-S', '.', '-B', 'build', '-G', 'Ninja',
+            '-DCMAKE_BUILD_TYPE=Release',
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=$env:TRIPLET",
+            "-DVCPKG_HOST_TRIPLET=$env:TRIPLET",
+            '-DVCPKG_MANIFEST_MODE=OFF',
+            '-DVCPKG_MANIFEST_INSTALL=OFF',
+            # NOT "install": the repo has a file named INSTALL in its root, and Windows paths are case-insensitive
+            "-DCMAKE_INSTALL_PREFIX=$ws/dist",
+            "-DFPARSER_ROOT_DIR=$ws/deps",
+            "-DCSXCAD_ROOT_DIR=$ws/deps",
+            '-DWITH_CUDA=ON',
+            "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHITECTURES",
+            '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
+          )
+          cmake @cfg
+
+      # Build and install are separate steps with their own logs: ninja runs jobs in parallel, so the
+      # failing command is often far above the last log lines, and "install" can fail on its own.
+      - name: Build openEMS
+        id: build
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --build build --config Release 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install openEMS
+        id: install
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake --install build --config Release 2>&1 | Tee-Object -FilePath install.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Show build and install errors
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path build.log) {
+            Write-Host '===== errors from build.log ====='
+            Select-String -Path build.log -CaseSensitive -Pattern 'FAILED:|fatal error|error C\d+|: error|LNK\d+|nvcc fatal|Error \d+$' -Context 0,2 |
+              Select-Object -First 40 | ForEach-Object { $_.ToString() }
+          }
+          if (Test-Path install.log) {
+            Write-Host '===== tail of install.log ====='
+            Get-Content install.log -Tail 40
+          }
+          exit 0
+
+      # ---- cuda-bin: the CUDA openEMS.exe plus exactly the DLLs it needs ----------------
+      - name: Assemble cuda-bin
+        shell: pwsh
+        env:
+          CUDA_VERSION: ${{ inputs.cuda_version || '12.6.3' }}
+          OFFICIAL_VERSION: ${{ inputs.official_version || 'v0.37.0' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ws      = $env:GITHUB_WORKSPACE
+          $prefix  = Join-Path $ws 'dist'
+          $out     = Join-Path $ws 'cuda-bin'
+          $cudaBin = Join-Path $env:CUDA_PATH 'bin'
+          if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # 1. openEMS.exe and the DLLs from <prefix>\bin
+          Copy-Item -LiteralPath (Join-Path $prefix 'bin\openEMS.exe') -Destination $out -Force
+          Get-ChildItem -LiteralPath (Join-Path $prefix 'bin') -Filter '*.dll' -File |
+            Copy-Item -Destination $out -Force
+
+          # 2. MSVC CRT (msvcp140*.dll, vcruntime140*.dll) from VC\Redist\MSVC\<version>\x64\Microsoft.VC*.CRT
+          $crtDir = Get-ChildItem -LiteralPath (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT' |
+            Select-Object -First 1
+          if (-not $crtDir) { throw "Microsoft.VC*.CRT not found under $env:VCToolsRedistDir" }
+          Get-ChildItem -LiteralPath $crtDir.FullName -File |
+            Where-Object { $_.Name -like 'msvcp140*.dll' -or $_.Name -like 'vcruntime140*.dll' } |
+            Copy-Item -Destination $out -Force
+
+          # 3. CUDA runtime
+          Copy-Item -LiteralPath (Join-Path $cudaBin 'cudart64_12.dll') -Destination $out -Force
+
+          # 4. Dependency walk from openEMS.exe: copy every DLL that is found in one of the search
+          #    directories, repeat for the copied DLLs, then delete what is not reachable.
+          #    (Written for this workflow; I could not read the official windows-package.yml.)
+          function Get-ImportedDlls([string]$Path) {
+            $text = (& dumpbin.exe /dependents $Path 2>&1 | Out-String)
+            [regex]::Matches($text, '(?im)^\s+(\S+\.dll)\s*$') | ForEach-Object { $_.Groups[1].Value }
+          }
+          $searchDirs = @(
+            $out,
+            (Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\$env:TRIPLET\bin"),
+            (Join-Path $ws 'deps\bin'),      # fparser.dll and CSXCAD.dll live in their own prefix
+            $cudaBin
+          )
+          $keep  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          $queue = [System.Collections.Generic.Queue[string]]::new()
+          $queue.Enqueue((Join-Path $out 'openEMS.exe'))
+          while ($queue.Count -gt 0) {
+            $file = $queue.Dequeue()
+            foreach ($dll in (Get-ImportedDlls $file)) {
+              if ($keep.Contains($dll)) { continue }
+              $src = $null
+              foreach ($dir in $searchDirs) {
+                $cand = Join-Path $dir $dll
+                if (Test-Path -LiteralPath $cand) { $src = $cand; break }
+              }
+              if (-not $src) { continue }    # OS DLL (kernel32, UCRT api-ms-*, ...): not shipped
+              [void]$keep.Add($dll)
+              $dest = Join-Path $out $dll
+              if (-not (Test-Path -LiteralPath $dest)) { Copy-Item -LiteralPath $src -Destination $dest -Force }
+              $queue.Enqueue($dest)
+            }
+          }
+          # cudart and the CRT were requested explicitly, so they stay even if nothing imports them by name
+          [void]$keep.Add('cudart64_12.dll')
+          Get-ChildItem -LiteralPath $out -Filter '*.dll' -File |
+            Where-Object { -not $keep.Contains($_.Name) -and $_.Name -notlike 'msvcp140*' -and $_.Name -notlike 'vcruntime140*' } |
+            ForEach-Object { Write-Host "removing unused: $($_.Name)"; Remove-Item -LiteralPath $_.FullName -Force }
+
+          # 5. no debug symbols; README
+          Get-ChildItem -LiteralPath $out -Recurse -Filter '*.pdb' -File | Remove-Item -Force
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          @"
+          openEMS with CUDA engine
+          ========================
+
+          This bin\ folder was added to the official openEMS $env:OFFICIAL_VERSION Windows package.
+          Everything outside bin\ is the unmodified official package.
+
+          Run (from this folder):
+              openEMS.exe <simulation.xml> --engine=cuda [--cuda-device=<n>]
+
+          Requirements: an NVIDIA GPU and a current NVIDIA driver. The CUDA runtime
+          (cudart64_12.dll) and the Microsoft Visual C++ runtime DLLs are included here.
+
+          Built from $env:GITHUB_REPOSITORY at commit $sha with CUDA Toolkit $env:CUDA_VERSION.
+          "@ | Set-Content -LiteralPath (Join-Path $out 'README_CUDA.txt') -Encoding UTF8
+
+          Write-Host '===== cuda-bin contents ====='
+          Get-ChildItem -LiteralPath $out | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Smoke test cuda-bin\openEMS.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:GITHUB_WORKSPACE 'cuda-bin\openEMS.exe'
+          # Minimal PATH: the runner's PATH contains the CUDA, vcpkg and MSVC folders, which would hide
+          # DLLs that are missing from cuda-bin.
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $output = (& $exe 2>&1 | Out-String)
+          $code = $LASTEXITCODE
+          Write-Host $output
+          Write-Host "exit code: $code"
+          # -1 is normal: openEMS prints its usage and exits with -1.
+          # -1073741515 (0xC0000135) and -1073741313 mean a DLL could not be loaded;
+          # any other NTSTATUS-style code (below -1000000000) is treated the same way.
+          if ($code -eq -1073741515 -or $code -eq -1073741313 -or $code -lt -1000000000) {
+            throw "openEMS.exe could not start (exit code $code): a DLL is missing or incompatible"
+          }
+          if ($output -notmatch '--engine=cuda') { throw 'The usage text does not contain --engine=cuda' }
+          # reset the exit code left by openEMS.exe (-1), otherwise the step would fail
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Upload cuda-bin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-bin
+          path: ${{ github.workspace }}/cuda-bin
+          if-no-files-found: error
+
+      # Save at the end: always() keeps the archives even if a later step fails.
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # Official openEMS package, unchanged, plus one new folder: bin\ with the CUDA openEMS.exe.
+  # The wheels come from the official archive; nothing is built here.
+  package:
+    needs: build
+    runs-on: windows-2022
+    env:
+      OFFICIAL_VERSION: ${{ inputs.official_version || 'v0.37.0' }}
+    steps:
+      - name: Download official package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $v = $env:OFFICIAL_VERSION
+          $url = "https://github.com/thliebig/openEMS-Project/releases/download/$v/openEMS_x64_${v}_msvc.zip"
+          Write-Host "Downloading $url"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile official.zip
+          } catch {
+            Write-Host "Download failed: $($_.Exception.Message)"
+            Write-Host "Assets of release ${v}:"
+            gh release view $v --repo thliebig/openEMS-Project --json assets --jq '.assets[].name'
+            throw
+          }
+          Expand-Archive -Path official.zip -DestinationPath pkgstage     # gives pkgstage\openEMS
+
+      - name: Download cuda-bin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cuda-bin
+          path: cuda-bin
+
+      - name: Add bin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'pkgstage\openEMS'
+          if (-not (Test-Path -LiteralPath $root)) { throw 'pkgstage\openEMS not found: the layout of the official zip differs from what is expected' }
+          $dest = Join-Path $root 'bin'
+          if (Test-Path -LiteralPath $dest) { throw 'The official package already has a bin folder; refusing to merge into it' }
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'cuda-bin') -Destination $dest -Recurse
+
+      - name: Verify package structure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:GITHUB_WORKSPACE 'pkgstage\openEMS'
+          $ver  = $env:OFFICIAL_VERSION.TrimStart('v')
+          $required = @(
+            'openEMS.exe', 'openEMS.dll', 'CSXCAD.dll', 'qt.conf', 'matlab',
+            'include\openEMS', 'lib\openEMS.lib',
+            "python\openems-$ver-cp313-*.whl",
+            'python\csxcad-0.7.0-cp313-*.whl',
+            'bin\openEMS.exe', 'bin\cudart64_12.dll'
+          )
+          $missing = @($required | Where-Object { -not (Test-Path -Path (Join-Path $root $_)) })
+          $forbidden = @()
+          if (Test-Path -LiteralPath (Join-Path $root 'hdf5.dll')) { $forbidden += 'hdf5.dll in the package root' }
+          $venv = @(Get-ChildItem -LiteralPath $root -Recurse -Directory -Filter 'venv' -ErrorAction SilentlyContinue)
+          if ($venv.Count -gt 0) { $forbidden += ('venv folder: ' + (($venv | ForEach-Object { $_.FullName }) -join ', ')) }
+
+          Write-Host '===== package root ====='
+          Get-ChildItem -LiteralPath $root | Select-Object Name | Format-Table -AutoSize | Out-String | Write-Host
+          if ($missing.Count -gt 0)   { Write-Host 'MISSING:';   $missing   | ForEach-Object { Write-Host "  $_" } }
+          if ($forbidden.Count -gt 0) { Write-Host 'FORBIDDEN:'; $forbidden | ForEach-Object { Write-Host "  $_" } }
+          if ($missing.Count -gt 0 -or $forbidden.Count -gt 0) { throw 'Package structure check failed' }
+
+      - name: Upload openEMS-Windows-CUDA
+        uses: actions/upload-artifact@v4
+        with:
+          name: openEMS-Windows-CUDA
+          path: pkgstage/
+          if-no-files-found: error
