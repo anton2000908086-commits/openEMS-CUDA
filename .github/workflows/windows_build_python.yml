@@ -343,7 +343,9 @@ jobs:
           # so openEMS's Cython source can resolve its package/interface files.
           Push-Location (Join-Path $ws 'CSXCAD\python')
           try {
-            python setup.py build_ext "-I$binding\include" "-L$binding\lib" "-R$binding\bin" bdist_wheel --dist-dir $wheelhouse
+            # MSVC does not support runtime_library_dirs (-R). DLL directories
+            # are provided through PATH and os.add_dll_directory() in the import test.
+            python setup.py build_ext "-I$binding\include" "-L$binding\lib" bdist_wheel --dist-dir $wheelhouse
             if ($LASTEXITCODE -ne 0) { throw 'Building the CSXCAD wheel failed' }
           } finally { Pop-Location }
           $csxWheel = @(Get-ChildItem -LiteralPath $wheelhouse -Filter 'csxcad-*-cp313-cp313-win_amd64.whl' -File)
@@ -356,7 +358,9 @@ jobs:
 
           Push-Location (Join-Path $ws 'python')
           try {
-            python setup.py build_ext "-I$binding\include" "-L$binding\lib" "-R$binding\bin" bdist_wheel --dist-dir $wheelhouse
+            # MSVC does not support runtime_library_dirs (-R). DLL directories
+            # are provided through PATH and os.add_dll_directory() in the import test.
+            python setup.py build_ext "-I$binding\include" "-L$binding\lib" bdist_wheel --dist-dir $wheelhouse
             if ($LASTEXITCODE -ne 0) { throw 'Building the openEMS wheel from this fork failed' }
           } finally { Pop-Location }
           $openemsWheel = @(Get-ChildItem -LiteralPath $wheelhouse -Filter 'openems-*-cp313-cp313-win_amd64.whl' -File)
