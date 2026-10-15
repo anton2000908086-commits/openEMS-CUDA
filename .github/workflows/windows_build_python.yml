@@ -339,6 +339,41 @@ jobs:
           $env:LIB = "$binding\lib;$env:LIB"
           $env:PATH = "$binding\bin;$env:PATH"
 
+          # Diagnose the exact downloaded sources and enforce the Windows setuptools fix.
+          # Some CSXCAD snapshots pass runtime_library_dirs to MSVC, which setuptools rejects.
+          Write-Host '===== source revisions used for Python bindings ====='
+          Write-Host 'openEMS fork commit:'
+          git -C $ws rev-parse HEAD
+          Write-Host 'CSXCAD commit:'
+          git -C (Join-Path $ws 'CSXCAD') rev-parse HEAD
+          foreach ($setupPath in @(
+            (Join-Path $ws 'CSXCAD\python\setup.py'),
+            (Join-Path $ws 'python\setup.py')
+          )) {
+            if (-not (Test-Path -LiteralPath $setupPath)) { throw "Python setup.py not found: $setupPath" }
+            $setupSource = Get-Content -Raw -LiteralPath $setupPath
+            $hasWindowsRuntimeGuard = (
+              $setupSource.Contains('del build_options["runtime_library_dirs"]') -or
+              $setupSource.Contains("del build_options['runtime_library_dirs']") -or
+              $setupSource.Contains('build_options.pop("runtime_library_dirs", None)') -or
+              $setupSource.Contains("build_options.pop('runtime_library_dirs', None)")
+            )
+            if (-not $hasWindowsRuntimeGuard) {
+              $ret = [regex]::Match($setupSource, '(?m)^([ \t]*)return build_options[ \t]*$')
+              if (-not $ret.Success) { throw "Could not safely patch runtime_library_dirs in $setupPath; inspect this downloaded source." }
+              $indent = $ret.Groups[1].Value
+              $replacement = $indent + 'if os.name != "posix":' + "`r`n" +
+                $indent + '    build_options.pop("runtime_library_dirs", None)' + "`r`n`r`n" +
+                $indent + 'return build_options'
+              $setupSource = $setupSource.Substring(0, $ret.Index) + $replacement + $setupSource.Substring($ret.Index + $ret.Length)
+              Set-Content -LiteralPath $setupPath -Value $setupSource -NoNewline -Encoding UTF8
+              Write-Host "Patched Windows runtime_library_dirs handling in $setupPath"
+            } else {
+              Write-Host "Windows runtime_library_dirs guard already exists in $setupPath"
+            }
+            Select-String -LiteralPath $setupPath -Pattern 'runtime_library_dirs|return build_options' -Context 2,2 | ForEach-Object { $_.ToString() }
+          }
+
           # Build CSXCAD's Python binding first, then install it only into this CI Python
           # so openEMS's Cython source can resolve its package/interface files.
           Push-Location (Join-Path $ws 'CSXCAD\python')
