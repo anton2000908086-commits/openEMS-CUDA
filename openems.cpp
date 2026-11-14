@@ -18,6 +18,7 @@
 #include "openems.h"
 #include <iomanip>
 #include <stdexcept>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include "tools/array_ops.h"
@@ -1159,6 +1160,15 @@ bool openEMS::CheckAbortCond()
 	return false;
 }
 
+//! A NaN or Inf in the field energy means that the simulation has diverged.
+//! Left alone it would end the run silently: every comparison with NaN is false, so the end criterion looks reached.
+static void CheckFinite(double value, const char* what, unsigned int timestep)
+{
+	if (!std::isfinite(value))
+		throw std::runtime_error(std::string("the simulation has diverged: ") + what + " is not finite (NaN/Inf) at time step "
+			+ std::to_string(timestep) + ". Check the mesh, the time step and the model.");
+}
+
 void openEMS::RunFDTD()
 {
 	cout << "Running FDTD engine... this may take a while... grab a cup of coffee?!?" << endl;
@@ -1204,6 +1214,7 @@ void openEMS::RunFDTD()
 		if ((Eng_Ext_SSD==NULL) && ProcField->CheckTimestep())
 		{
 			currE = ProcField->CalcTotalEnergyEstimate();
+			CheckFinite(currE, "the field energy", FDTD_Eng->GetNumberOfTimesteps());
 			if (currE>maxE)
 				maxE=currE;
 		}
@@ -1225,6 +1236,7 @@ void openEMS::RunFDTD()
 			if (Eng_Ext_SSD==NULL)
 			{
 				currE = ProcField->CalcTotalEnergyEstimate();
+				CheckFinite(currE, "the field energy", currTS);
 				if (currE>maxE)
 					maxE=currE;
 				if (maxE)
@@ -1245,6 +1257,10 @@ void openEMS::RunFDTD()
 				DumpRunStatistics(__OPENEMS_RUN_STAT_FILE__, t_run, currTS, speed, currE);
 		}
 	}
+	// final check: a run shorter than the energy checks above must not end with diverged fields either
+	if (Eng_Ext_SSD==NULL)
+		CheckFinite(ProcField->CalcTotalEnergyEstimate(), "the field energy", FDTD_Eng->GetNumberOfTimesteps());
+
 	if ((change>endCrit) && (FDTD_Op->GetExcitationSignal()->GetExciteType()==0))
 		cerr << "RunFDTD: Warning: Max. number of timesteps was reached before the end-criteria of -" << fabs(10.0*log10(endCrit)) << "dB was reached... " << endl << \
 				"\tYou may want to choose a higher number of max. timesteps... " << endl;

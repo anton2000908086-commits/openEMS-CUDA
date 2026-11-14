@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <limits>
 #include <cmath>
 
 #define CUDA_CHECK(call) \
@@ -364,8 +365,17 @@ bool Engine_CUDA::IterateTS(unsigned int iterTS)
 	// OPENEMS_CUDA_TEST_FAIL_STEP=<n>: fail at time step n (to test the error handling of a run)
 	static const long failStep = getenv("OPENEMS_CUDA_TEST_FAIL_STEP") ? atol(getenv("OPENEMS_CUDA_TEST_FAIL_STEP")) : -1;
 
+	// OPENEMS_CUDA_TEST_NAN_STEP=<n>: put a NaN into one voltage at time step n (to test the divergence check)
+	static const long nanStep = getenv("OPENEMS_CUDA_TEST_NAN_STEP") ? atol(getenv("OPENEMS_CUDA_TEST_NAN_STEP")) : -1;
+	static bool nanDone = false;
+
 	for (unsigned int iter = 0; iter < iterTS; ++iter)
 	{
+		if (nanStep >= 0 && !nanDone && (long)numTS >= nanStep)
+		{
+			SetVolt(0, 1, 1, 1, std::numeric_limits<float>::quiet_NaN());
+			nanDone = true;
+		}
 		if (failStep >= 0 && (long)numTS >= failStep)
 			throw std::runtime_error("CUDA engine: test failure injected at time step " + std::to_string(numTS));
 
