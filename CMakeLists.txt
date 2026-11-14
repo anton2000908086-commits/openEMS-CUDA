@@ -12,6 +12,7 @@ cmake_minimum_required(VERSION 3.8)
 if(${WITH_CUDA})
   enable_language(CUDA)
   include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+  include_directories(${PROJECT_SOURCE_DIR}/FDTD ${PROJECT_SOURCE_DIR}/FDTD_CUDA)
 endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")

@@ -9,16 +9,16 @@ endif()
 
 if(${WITH_CUDA})
   set(CUDA_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_cuda.cu
-    ${CMAKE_CURRENT_SOURCE_DIR}/operator_cuda.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/upml_kernels_cuda.cu
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_upml_cuda.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_cuda_ext.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/excitation_kernels_cuda.cu
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_excitation_cuda.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/lorentz_kernels_cuda.cu
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_lorentz_cuda.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine_interface_cuda.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_cuda.cu
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/operator_cuda.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/upml_kernels_cuda.cu
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_ext_upml_cuda.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_cuda_ext.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/excitation_kernels_cuda.cu
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_ext_excitation_cuda.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/lorentz_kernels_cuda.cu
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_ext_lorentz_cuda.cpp
+    ${PROJECT_SOURCE_DIR}/FDTD_CUDA/engine_interface_cuda.cpp
   )
 endif()
 

@@ -19,15 +19,12 @@ where link
 cl 2>&1 | findstr /i "версии version"
 "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin\nvcc.exe" --version | findstr /i "release"
 
-if /i "%1"=="clean" rmdir /s /q D:\openEMS-CUDA-master\build
-if /i "%2"=="clean" rmdir /s /q D:\openEMS-CUDA-master\build
+if /i "%1"=="clean" rmdir /s /q "%~dp0build"
+if /i "%2"=="clean" rmdir /s /q "%~dp0build"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\openEMS-CUDA-master\build_openems.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_openems.ps1"
 if errorlevel 1 (
     echo Build failed, see D:\build_openems.log
     exit /b 1
 )
 
-if /i "%1"=="compare" call D:\selftest\run_compare.cmd
-if /i "%2"=="compare" call D:\selftest\run_compare.cmd
- 

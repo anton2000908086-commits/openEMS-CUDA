@@ -47,9 +47,9 @@
 #include <vtkVersion.h>
 
 #ifdef WITH_CUDA
-#include "FDTD/engine_cuda.h"
-#include "FDTD/operator_cuda.h"
-#include "FDTD/engine_interface_cuda.h"
+#include "FDTD_CUDA/engine_cuda.h"
+#include "FDTD_CUDA/operator_cuda.h"
+#include "FDTD_CUDA/engine_interface_cuda.h"
 #endif
 
 //external libs
