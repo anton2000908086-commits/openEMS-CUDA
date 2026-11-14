@@ -29,7 +29,15 @@ Engine_CUDA* Engine_CUDA::New(const Operator_CUDA* op, unsigned int cuda_device_
 	cout << "Create FDTD engine (CUDA)" << endl;
 	Engine_CUDA* e = new Engine_CUDA(op);
 	e->setCUDAdevice(cuda_device_number);
-	e->Init();
+	try
+	{
+		e->Init();
+	}
+	catch (...)
+	{
+		delete e; // frees what Init() has allocated so far
+		throw;
+	}
 	return e;
 }
 

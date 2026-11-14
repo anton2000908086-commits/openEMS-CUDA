@@ -17,6 +17,7 @@
 
 #include "openems.h"
 #include <iomanip>
+#include <stdexcept>
 #include <iostream>
 #include <fstream>
 #include "tools/array_ops.h"
@@ -1088,7 +1089,16 @@ int openEMS::SetupFDTD()
 	}
 
 	//create FDTD engine
-	FDTD_Eng = FDTD_Op->CreateEngine();
+	try
+	{
+		FDTD_Eng = FDTD_Op->CreateEngine();
+	}
+	catch (const std::exception& e)
+	{
+		cerr << "openEMS::SetupFDTD: Error: " << e.what() << endl;
+		FDTD_Eng = NULL;
+		return 3;
+	}
 
 	if (Op_Ext_SSD)
 	{
