@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
+#include <exception>
 #include <fstream>
 #include <sstream>
 
@@ -72,9 +73,40 @@ int main(int argc, char *argv[])
 	  cerr << "openEMS - ParseFDTDSetup failed." << endl;
 	  exit(1);
 	}
-	EC = FDTD.SetupFDTD();
+	// Errors thrown by an engine (e.g. a failed CUDA call) must end the run with a clear message and
+	// a non-zero exit code instead of an uncaught exception (abort, crash dialog on Windows).
+	try
+	{
+		EC = FDTD.SetupFDTD();
+	}
+	catch (const std::exception& e)
+	{
+		cerr << "openEMS - Error during setup: " << e.what() << endl;
+		exit(3);
+	}
+	catch (...)
+	{
+		cerr << "openEMS - Error during setup: unknown exception" << endl;
+		exit(3);
+	}
 	if (EC) exit(EC);
-	FDTD.RunFDTD();
+
+	try
+	{
+		FDTD.RunFDTD();
+	}
+	catch (const std::exception& e)
+	{
+		cerr << "openEMS - Error during the simulation: " << e.what() << endl;
+		cerr << "openEMS - The simulation was aborted. Result files written so far are incomplete: do not use them." << endl;
+		exit(4);
+	}
+	catch (...)
+	{
+		cerr << "openEMS - Error during the simulation: unknown exception" << endl;
+		cerr << "openEMS - The simulation was aborted. Result files written so far are incomplete: do not use them." << endl;
+		exit(4);
+	}
 
 #ifdef MPI_SUPPORT
 	FDTD.Reset(); //make sure everything is cleaned-up before calling MPI::Finalize()

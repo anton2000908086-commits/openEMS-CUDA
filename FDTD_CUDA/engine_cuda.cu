@@ -361,8 +361,14 @@ bool Engine_CUDA::IterateTS(unsigned int iterTS)
 	// changes made on the host (SetVolt/SetCurr) must reach the GPU before computing
 	SyncToDevice();
 
+	// OPENEMS_CUDA_TEST_FAIL_STEP=<n>: fail at time step n (to test the error handling of a run)
+	static const long failStep = getenv("OPENEMS_CUDA_TEST_FAIL_STEP") ? atol(getenv("OPENEMS_CUDA_TEST_FAIL_STEP")) : -1;
+
 	for (unsigned int iter = 0; iter < iterTS; ++iter)
 	{
+		if (failStep >= 0 && (long)numTS >= failStep)
+			throw std::runtime_error("CUDA engine: test failure injected at time step " + std::to_string(numTS));
+
 		// same order as Engine::IterateTS
 		//voltage updates with extensions
 		DoPreVoltageUpdates();
