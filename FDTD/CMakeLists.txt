@@ -11,6 +11,14 @@ if(${WITH_CUDA})
   set(CUDA_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/engine_cuda.cu
     ${CMAKE_CURRENT_SOURCE_DIR}/operator_cuda.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/upml_kernels_cuda.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_upml_cuda.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine_cuda_ext.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/excitation_kernels_cuda.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_excitation_cuda.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/lorentz_kernels_cuda.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine_ext_lorentz_cuda.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine_interface_cuda.cpp
   )
 endif()
 

@@ -49,6 +49,7 @@
 #ifdef WITH_CUDA
 #include "FDTD/engine_cuda.h"
 #include "FDTD/operator_cuda.h"
+#include "FDTD/engine_interface_cuda.h"
 #endif
 
 //external libs
@@ -380,6 +381,11 @@ Engine_Interface_FDTD* openEMS::NewEngineInterface(int multigridlevel)
 	Operator_Cylinder* op_cyl = dynamic_cast<Operator_Cylinder*>(FDTD_Op);
 	if (op_cyl)
 		return new Engine_Interface_Cylindrical_FDTD(op_cyl);
+#ifdef WITH_CUDA
+	Operator_CUDA* op_cuda = dynamic_cast<Operator_CUDA*>(FDTD_Op);
+	if (op_cuda)
+		return new Engine_Interface_CUDA(op_cuda);
+#endif
 	Operator_sse* op_sse = dynamic_cast<Operator_sse*>(FDTD_Op);
 	if (op_sse)
 		return new Engine_Interface_SSE_FDTD(op_sse);

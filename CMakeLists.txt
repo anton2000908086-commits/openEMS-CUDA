@@ -11,9 +11,13 @@ cmake_minimum_required(VERSION 3.8)
 
 if(${WITH_CUDA})
   enable_language(CUDA)
+  include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+if(MSVC)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FIiso646.h")
+endif()
 
 # default
 set(LIB_VERSION_MAJOR 0)
@@ -158,7 +162,9 @@ else()
 endif()
 message(STATUS "vtk libraries " ${vtk_LIBS})
 
-include(${VTK_USE_FILE})
+if(VTK_USE_FILE)
+  include(${VTK_USE_FILE})
+endif()
 INCLUDE_DIRECTORIES (${VTK_INCLUDE_DIR})
 
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")

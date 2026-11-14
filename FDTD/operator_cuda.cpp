@@ -1,9 +1,9 @@
 #include "operator_cuda.h"
 #include "engine_cuda.h"
 
-#include "tools/array_ops.h"
-
 #include <assert.h>
+#include <stdexcept>
+#include <string>
 
 Operator_CUDA* Operator_CUDA::New(unsigned int cuda_device_number)
 {
@@ -26,44 +26,33 @@ void Operator_CUDA::setCUDAdevice(unsigned int cuda_device_number) {
 
 void Operator_CUDA::InitOperator()
 {
-	Delete3DArray_CUDA(vv,numLines);
-	Delete3DArray_CUDA(vi,numLines);
-	Delete3DArray_CUDA(iv,numLines);
-	Delete3DArray_CUDA(ii,numLines);
+	// fail early with a clear message if the requested GPU does not exist
+	int nDevices = 0;
+	cudaError_t err = cudaGetDeviceCount(&nDevices);
+	if (err != cudaSuccess)
+		throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err));
+	if (nDevices <= 0)
+		throw std::runtime_error("No CUDA devices found");
+	if (m_cuda_device_number >= (unsigned int)nDevices)
+		throw std::runtime_error("CUDA device number out of range");
 
 	// Check that CUDA_VECTOR is the correct type
 	assert(sizeof(CUDA_VECTOR) == sizeof(FDTD_FLOAT)*4);
 
-	vv = Create3DArray_CUDA<CUDA_VECTOR>(numLines);
-	vi = Create3DArray_CUDA<CUDA_VECTOR>(numLines);
-	iv = Create3DArray_CUDA<CUDA_VECTOR>(numLines);
-	ii = Create3DArray_CUDA<CUDA_VECTOR>(numLines);
+	const size_t numCells = (size_t)numLines[0] * numLines[1] * numLines[2];
+	const float4 zero = {0.0f, 0.0f, 0.0f, 0.0f};
+	m_vv.assign(numCells, zero);
+	m_vi.assign(numCells, zero);
+	m_ii.assign(numCells, zero);
+	m_iv.assign(numCells, zero);
 }
 
 void Operator_CUDA::Delete()
 {
-	CSX = NULL;
+	std::vector<float4>().swap(m_vv);
+	std::vector<float4>().swap(m_vi);
+	std::vector<float4>().swap(m_ii);
+	std::vector<float4>().swap(m_iv);
 
-	Delete3DArray_CUDA(vv,numLines);
-	Delete3DArray_CUDA(vi,numLines);
-	Delete3DArray_CUDA(iv,numLines);
-	Delete3DArray_CUDA(ii,numLines);
-	vv=vi=iv=ii=0;
-	delete MainOp; MainOp=0;
-	for (int n=0; n<3; ++n)
-	{
-		delete[] EC_C[n];EC_C[n]=0;
-		delete[] EC_G[n];EC_G[n]=0;
-		delete[] EC_L[n];EC_L[n]=0;
-		delete[] EC_R[n];EC_R[n]=0;
-	}
-
-	Delete_N_3DArray(m_epsR,numLines);
-	m_epsR=0;
-	Delete_N_3DArray(m_kappa,numLines);
-	m_kappa=0;
-	Delete_N_3DArray(m_mueR,numLines);
-	m_mueR=0;
-	Delete_N_3DArray(m_sigma,numLines);
-	m_sigma=0;
+	Operator::Delete();
 }
