@@ -31,3 +31,5 @@ python/dist
 !python/doc
 python/doc/_build
 python/doc/Tutorials/__*
+/third_party/
+*.log
