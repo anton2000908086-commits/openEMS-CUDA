@@ -643,6 +643,15 @@ void openEMS::SetupCylinderMultiGrid(std::string val)
 
 bool openEMS::SetupOperator()
 {
+#ifdef WITH_CUDA
+	// the cylindrical operators are host operators: without this check --engine=cuda would silently be ignored
+	if (CylinderCoords && (m_engine == EngineType_CUDA))
+	{
+		cerr << "openEMS::SetupOperator: Error: the CUDA engine does not support cylindrical coordinates. "
+			"Use another engine (e.g. --engine=multithreaded) or Cartesian coordinates." << endl;
+		return false;
+	}
+#endif
 	if (CylinderCoords)
 	{
 		if (m_CC_MultiGrid.size()>0)
