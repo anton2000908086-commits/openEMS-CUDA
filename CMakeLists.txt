@@ -10,7 +10,17 @@ PROJECT(openEMS CXX C)
 cmake_minimum_required(VERSION 3.8)
 
 if(${WITH_CUDA})
+  # Honour CMAKE_CUDA_ARCHITECTURES (policy CMP0104, CMake >= 3.18). The project asks only for 3.8,
+  # where the policy may keep its old behaviour and the setting would be ignored.
+  if(POLICY CMP0104)
+    cmake_policy(SET CMP0104 NEW)
+  endif()
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    # same list as the CI workflow; use -DCMAKE_CUDA_ARCHITECTURES=86 for a faster build for one GPU
+    set(CMAKE_CUDA_ARCHITECTURES "75;86;89")
+  endif()
   enable_language(CUDA)
+  message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
   include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
   include_directories(${PROJECT_SOURCE_DIR}/FDTD ${PROJECT_SOURCE_DIR}/FDTD_CUDA)
 endif()
