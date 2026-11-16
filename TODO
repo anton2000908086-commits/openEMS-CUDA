@@ -12,3 +12,15 @@ wishes:
 outlook:
 - incorporate a static FD-solver into openEMS
 - include other EM-solver (e.g. FEM, FDFD, TLM)
+
+CUDA engine (this fork), see FDTD_CUDA/CHANGELOG_CUDA.md ("Not done")
+
+todo:
+- Steady-State Detection, Mur ABC and TFSF on the GPU
+- verify the Lorentz term of the ADE, PML types other than PML_8 and --cuda-device other than 0
+- Linux build, and a comparison with upstream v0.37.0 on real models
+
+wishes:
+- batched voltage/current integrals, asynchronous field copies, DFT on the GPU
+- performance tuning (CUDA graphs, streams, pinned memory, kernel fusion)
+- move the fork to a newer upstream version (series RLC element, TimeStepFactor)

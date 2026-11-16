@@ -6,6 +6,12 @@
 
 openEMS is licensed under the terms of the GPLv3, see <http://www.gnu.org/licenses/>.
 
+CUDA engine (this fork):
+This fork adds a GPU engine, selected with --engine=cuda.
+Documentation:  FDTD_CUDA/README.md
+Changes:        FDTD_CUDA/CHANGELOG_CUDA.md
+Open items:     TODO
+
 
 Website:   http://openems.de
 Forum:     http://openems.de/forum/
