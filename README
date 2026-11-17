@@ -10,6 +10,7 @@ CUDA engine (this fork):
 This fork adds a GPU engine, selected with --engine=cuda.
 Documentation:  FDTD_CUDA/README.md
 Changes:        FDTD_CUDA/CHANGELOG_CUDA.md
+Tests:          tests/cuda/README.md
 Open items:     TODO
 
 
