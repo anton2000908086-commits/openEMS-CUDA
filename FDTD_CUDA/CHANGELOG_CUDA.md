@@ -49,6 +49,7 @@ the fork is moved to a newer upstream version.
 | `openems.cpp` **[upstream file]** | CUDA includes, `NewEngineInterface` for the CUDA engine, error handling around the engine creation, refusal of cylindrical coordinates, NaN/Inf check of the energy |
 | `main.cpp` **[upstream file]** | `try/catch` around `SetupFDTD` and `RunFDTD`, exit codes 3 and 4 |
 | `FDTD/extensions/operator_ext_{dispersive,excitation,lorentzmaterial,upml}.h` **[upstream file]** | one `friend class` line each, so that the GPU extensions can read the operator data |
+| `README`, `TODO` **[upstream file]** | a short pointer to this documentation; the open items of the CUDA engine appended to `TODO` |
 | `.gitignore`, `.gitattributes` **[upstream file]** | `third_party/`, `*.log`; line-ending rules for the new files |
 
 ## Not done
