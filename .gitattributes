@@ -4,3 +4,4 @@ FDTD_CUDA/** text eol=lf
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.sh text eol=lf
+tests/cuda/** text eol=lf

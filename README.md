@@ -132,9 +132,22 @@ The log line `GPU memory for fields and operator` shows the actual figure. The o
 host, so a model has to fit into the host memory as well.
 
 Speed on an RTX 3060: about 900 MCells/s for a model of about one million cells (measured before the
-latest changes and not repeated); 330 to 400 MCells/s for the 12 000-cell test models, where the launch
-overhead dominates. No performance tuning has been done: no CUDA graphs, streams, pinned memory or kernel
+latest changes and not repeated); 270 to 400 MCells/s for the 12 000-cell test models, where the launch
+overhead dominates (the CPU `basic` engine needs 12 to 33 MCells/s on the same models: 12 with PML).
+With an extension on the host (`OPENEMS_CUDA_ALLOW_HOST_EXT=1`) the speed drops to the level of the CPU
+engine or below it (14 to 30 MCells/s on the test models with Mur and with a sinusoidal excitation), so for
+such models `--engine=multithreaded` is the better choice. No performance tuning has been done: no CUDA graphs, streams, pinned memory or kernel
 fusion.
+
+## Tests
+
+`tests/cuda/` holds the regression tests (14 cases: comparison with the CPU engine, refusals, error
+handling) and a runner for `compute-sanitizer`; see `tests/cuda/README.md`.
+
+```
+python tests/cuda/run_tests.py
+python tests/cuda/run_sanitizer.py
+```
 
 ## Source layout
 
