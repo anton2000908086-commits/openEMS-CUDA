@@ -99,7 +99,7 @@ void Engine_Ext_LorentzMaterial::DoPreVoltageUpdates()
 
 					volt_Lor_ADE[o][1][i]+=m_Op_Ext_Lor->v_Lor_ADE[o][1][i]*volt_ADE[o][1][i];
 					volt_ADE[o][1][i] *= m_Op_Ext_Lor->v_int_ADE[o][1][i];
-					volt_ADE[o][1][i] += m_Op_Ext_Lor->v_ext_ADE[o][1][i] * (m_Eng->Engine::GetVolt(1,pos[0][i],pos[1][i],pos[2][i])-volt_Lor_ADE[o][2][i]);
+					volt_ADE[o][1][i] += m_Op_Ext_Lor->v_ext_ADE[o][1][i] * (m_Eng->Engine::GetVolt(1,pos[0][i],pos[1][i],pos[2][i])-volt_Lor_ADE[o][1][i]);
 
 					volt_Lor_ADE[o][2][i]+=m_Op_Ext_Lor->v_Lor_ADE[o][2][i]*volt_ADE[o][2][i];
 					volt_ADE[o][2][i] *= m_Op_Ext_Lor->v_int_ADE[o][2][i];
