@@ -36,6 +36,14 @@ the fork is moved to a newer upstream version.
   instead of `atomicAdd`. The result is deterministic and equals the host version.
 * CMake: `CMAKE_CUDA_ARCHITECTURES` is honoured (policy CMP0104), default `75;86;89`.
 
+## Lorentz reference (upstream bug)
+* `Engine_Ext_LorentzMaterial::DoPreVoltageUpdates`, `Engine::BASIC` branch with the Lorentz term: the
+  y component subtracted the Lorentz state of the **z** component (`volt_Lor_ADE[o][2]` instead of `[1]`).
+  The `SSE` and default branches and the current update are correct. The file is identical to upstream
+  v0.0.35, so the `basic` engine of v0.0.35 gives wrong results for electric Lorentz poles. The GPU
+  extension was correct; it differed from `basic` (0.5 % and 19 % in the test model) because the reference
+  was wrong. Fixed in the `basic` branch (one index). Drude (no pole) is not affected.
+
 ## Build system
 * The CUDA sources moved to `FDTD_CUDA/` (pure rename, history kept).
 * `build.cmd` and `build_openems.ps1` build the project and its dependencies into `third_party/`;
@@ -48,13 +56,14 @@ the fork is moved to a newer upstream version.
 | `FDTD/CMakeLists.txt` **[upstream file]** | CUDA sources added to the build |
 | `openems.cpp` **[upstream file]** | CUDA includes, `NewEngineInterface` for the CUDA engine, error handling around the engine creation, refusal of cylindrical coordinates, NaN/Inf check of the energy |
 | `main.cpp` **[upstream file]** | `try/catch` around `SetupFDTD` and `RunFDTD`, exit codes 3 and 4 |
+| `FDTD/extensions/engine_ext_lorentzmaterial.cpp` **[upstream file]** | one index in the `Engine::BASIC` voltage update (see "Lorentz reference") |
 | `FDTD/extensions/operator_ext_{dispersive,excitation,lorentzmaterial,upml}.h` **[upstream file]** | one `friend class` line each, so that the GPU extensions can read the operator data |
 | `README`, `TODO` **[upstream file]** | a short pointer to this documentation; the open items of the CUDA engine appended to `TODO` |
 | `.gitignore`, `.gitattributes` **[upstream file]** | `third_party/`, `*.log`; line-ending rules for the new files |
 
 ## Not done
 * Steady-State Detection, Mur ABC and TFSF on the GPU.
-* Verification of the Lorentz term of the ADE, of PML types other than `PML_8`, of `--cuda-device` other than 0.
+* Verification of PML types other than `PML_8`, of `--cuda-device` other than 0.
 * Batched voltage/current integrals, asynchronous field copies, DFT on the GPU.
 * Performance tuning (CUDA graphs, streams, pinned memory, kernel fusion).
 * A Linux build, and a comparison with upstream v0.37.0 on real models.

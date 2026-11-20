@@ -38,7 +38,7 @@ openEMS.exe model.xml --engine=cuda [--cuda-device=<n>]
 | Voltage and current updates | yes | float4 arrays, block 32x4x2 |
 | Excitation (soft, voltage and current) | yes | deterministic, see changelog |
 | UPML | yes | verified as `PML_8` on all faces |
-| Lorentz / Drude, Conducting Sheet | yes | Conducting Sheet verified; the Lorentz term of the ADE is **not** verified |
+| Lorentz / Drude, Conducting Sheet | yes | verified, see "Verification status" |
 | Energy estimate (end criterion) | yes | one reduction on the GPU |
 | Mur ABC, TFSF, Steady-State Detection | **no** | refused unless allowed, see below |
 | Cylindrical coordinates | **no** | always refused |
@@ -91,7 +91,7 @@ are checked after every call and at the end of every batch of time steps.
 * Mur ABC, TFSF and Steady-State Detection run only on the host (see "What runs where"); a periodic
   excitation therefore needs `OPENEMS_CUDA_ALLOW_HOST_EXT=1`.
 * Cylindrical coordinates are not supported (they used to be silently ignored; now refused).
-* Not verified on the GPU: the Lorentz term of the ADE, PML other than `PML_8` on all faces, `--cuda-device`
+* Not verified on the GPU: PML other than `PML_8` on all faces, `--cuda-device`
   other than 0, several GPUs, MPI.
 * Tested on one GPU model (RTX 3060, `sm_86`), Windows, CUDA 12.2. **The Linux build has not been tried.**
 * Verification used small models (about 12 000 cells) against the CPU engines, apart from the speed
@@ -116,6 +116,7 @@ engine:
 | Sinusoidal excitation (with `OPENEMS_CUDA_ALLOW_HOST_EXT=1`) | agree |
 | Magnetic (current) excitation along y and z | agree (1e-5 to 5e-5 relative) when the excited component is probed |
 | Magnetic (current) excitation along x | near probe agrees (8e-6); the far probe differs by 1.1e-4 relative at a weak signal, not investigated further |
+| Drude and Lorentz slab (electric pole, magnetic pole, both) | agree within the tolerance of the comparison script, after the fix of the `basic` reference described in the changelog ("Lorentz reference") |
 | Mur boundary | refused; with `OPENEMS_CUDA_ALLOW_HOST_EXT=1` it runs and agrees |
 | `compute-sanitizer` memcheck, racecheck, initcheck, synccheck on the PEC, PML and Conducting Sheet models | 0 errors |
 | Injected CUDA failure / injected NaN | exit code 4 with a message |
@@ -141,7 +142,7 @@ fusion.
 
 ## Tests
 
-`tests/cuda/` holds the regression tests (14 cases: comparison with the CPU engine, refusals, error
+`tests/cuda/` holds the regression tests (19 cases: comparison with the CPU engine, refusals, error
 handling) and a runner for `compute-sanitizer`; see `tests/cuda/README.md`.
 
 ```

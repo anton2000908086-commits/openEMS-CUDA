@@ -28,6 +28,10 @@ experiment cannot change a result. Exit code 0 means that all cases passed.
 | `pml` | `selftest_pml.xml` | PML_8 on all faces | agree |
 | `sheet` | `selftest_sheet.xml` | PML_8 and a Conducting Sheet | agree |
 | `wire` | `selftest_wire.xml` | wire excitation that overlaps itself: entries summed in a fixed order | agree |
+| `drude` | `selftest_drude.xml` | a slab of Drude material (plasma frequency and relaxation time) | agree |
+| `lorentz` | `selftest_lorentz.xml` | a slab of Lorentz material, electric and magnetic poles (the Lorentz term of the ADE) | agree |
+| `lorentz_e`, `lorentz_m` | `selftest_lorentz_e.xml`, `selftest_lorentz_m.xml` | the same slab with only the electric or only the magnetic pole | agree |
+| `lorentz_host` | `selftest_lorentz.xml` | the Lorentz slab with `OPENEMS_CUDA_HOST_EXT=1` (all extensions on the host); separates a fault of the GPU extension from a fault of the engine | agree |
 | `curr_z`, `curr_y`, `curr_x` | `selftest_curr.xml`, `..._curry.xml`, `..._currx.xml` | magnetic (current) source along z, y, x | agree |
 | `sine_host` | `selftest_sine.xml` | periodic excitation; Steady-State Detection runs on the host | agree |
 | `sine_refused` | `selftest_sine.xml` | the same without `OPENEMS_CUDA_ALLOW_HOST_EXT=1` | exit code 3, message |
