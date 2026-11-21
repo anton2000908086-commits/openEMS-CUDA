@@ -112,3 +112,6 @@ $other = $errs | Where-Object { $_ -notmatch '^(.*?)\(\d+\)' -and $_ -notmatch '
 if ($other) { Write-Host '--- other'; $other }
 if ($code -ne 0) { throw "Build failed ($code). Full log: $log" }
 Write-Host "`nBuild finished: $build"
+
+# collect the result into <build>\out (layout of the official package)
+& (Join-Path $Root 'stage_out.ps1') -Root $Root -Build $build -DepsRoot $DepsRoot -VcpkgRoot $VcpkgRoot -Nvcc $Nvcc

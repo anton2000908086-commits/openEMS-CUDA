@@ -25,6 +25,13 @@ environment variables `OPENEMS_VCPKG_ROOT`, `OPENEMS_DEPS` and `OPENEMS_SRC`; th
 `-Arch` (default of the script: `86`; default of CMake if nothing is given: `75;86;89`).
 The dependencies are **not pinned**: the first build takes the current versions.
 
+After a successful build `stage_out.ps1` (called by `build_openems.ps1`, can also be run alone) collects the
+result into `build\out`, laid out like the official openEMS Windows package: `openEMS.exe`, `nf2ff.exe` and all
+runtime DLLs in the root (found by following the imports with `dumpbin`; an unknown DLL is an error), plus
+`include\`, `lib\`, `matlab\` and a `README.txt` with the revision. The folder is deleted and created again on
+every run. Not included, compared with the official package: AppCSXCAD, QCSXCAD, Qt, `sar_calc.exe`, `CTB`,
+`python`, `resources\phantoms`, `include\QCSXCAD`, `include\openEMS\arraylib`. The tests still use `build\`.
+
 Linux (**not verified**: written without a Linux machine, no run so far): `./build.sh` and `./build_openems.sh`.
 Boost, HDF5, TinyXML and VTK come from the system packages (the script prints the `apt` line if they are
 missing); fparser and CSXCAD are built into `third_party/` like on Windows. Needs CMake 3.18 or newer, nvcc
