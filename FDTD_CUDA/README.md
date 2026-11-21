@@ -25,6 +25,15 @@ environment variables `OPENEMS_VCPKG_ROOT`, `OPENEMS_DEPS` and `OPENEMS_SRC`; th
 `-Arch` (default of the script: `86`; default of CMake if nothing is given: `75;86;89`).
 The dependencies are **not pinned**: the first build takes the current versions.
 
+Linux (**not verified**: written without a Linux machine, no run so far): `./build.sh` and `./build_openems.sh`.
+Boost, HDF5, TinyXML and VTK come from the system packages (the script prints the `apt` line if they are
+missing); fparser and CSXCAD are built into `third_party/` like on Windows. Needs CMake 3.18 or newer, nvcc
+and a host gcc that the CUDA version supports (CUDA 12.2: gcc 12 or older; set `CUDAHOSTCXX=g++-12`
+otherwise, the script refuses a newer gcc). Settings by environment variables: `CUDA_ARCH` (default `86`),
+`CUDACXX`, `CUDAHOSTCXX`, `OPENEMS_DEPS`, `OPENEMS_SRC`, `REBUILD_DEPS=1`, `SKIP_SYS_CHECK=1`. After the
+build `python3 tests/cuda/run_tests.py` should work the same way (the executable is `build/openEMS`).
+If the shell scripts are not executable after checkout: `chmod +x build.sh build_openems.sh`.
+
 Run a model:
 
 ```
