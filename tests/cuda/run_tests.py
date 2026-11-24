@@ -4,7 +4,9 @@
   python run_tests.py [--exe PATH] [--repo PATH] [-v] [--list] [name ...]
 
 Every case runs a model with the basic (CPU) engine and with the CUDA engine and compares the probe
-files, or checks that the CUDA engine refuses / stops with the expected exit code.
+files, or checks that the CUDA engine refuses / stops with the expected exit code. The cases "mt_*" compare
+the multithreaded CPU engine (the default CPU engine of openEMS and of RFsim) with the basic engine on the same
+models: they guard against a CPU engine that silently does not run the extensions (excitation, PML, ...).
 The results are written to tests/cuda/work/ (not under version control). Exit code 0: all cases passed.
 """
 import argparse, collections, contextlib, io, os, re, shutil, subprocess, sys, time
@@ -22,6 +24,7 @@ def C(name, model, env=None, kind="compare", arg=None, tol=1e-4, note=""):
 
 # kind "compare": both engines must finish and agree within tol (relative to the largest value)
 # kind "exit":    the CUDA run must end with exit code arg[0] and its log must contain arg[1]
+# kind "cpu":     the CPU engine named arg and the basic engine must agree within tol (no CUDA run)
 CASES = [
     C("pec",         "selftest.xml",       note="E-field source in a PEC cavity"),
     C("pml",         "selftest_pml.xml",   note="PML_8 on all faces"),
@@ -43,6 +46,25 @@ CASES = [
     C("inject_fail", "selftest.xml",       env={"OPENEMS_CUDA_TEST_FAIL_STEP": "100"}, kind="exit", arg=(4, "test failure injected"), note="error during the run"),
     C("inject_nan",  "selftest.xml",       env={"OPENEMS_CUDA_TEST_NAN_STEP": "150"}, kind="exit", arg=(4, "diverged"), note="NaN in the fields is detected"),
 ]
+
+# Other CPU engines than the basic one: name of the engine -> short prefix of the case names.
+# To cover one more engine (for example "sse-compressed") add it here.
+CPU_ENGINES = {"multithreaded": "mt"}
+CPU_MODELS = [
+    ("pec",     "selftest.xml",         "E-field source in a PEC cavity"),
+    ("pml",     "selftest_pml.xml",     "PML_8 on all faces"),
+    ("sheet",   "selftest_sheet.xml",   "PML_8 and a Conducting Sheet"),
+    ("wire",    "selftest_wire.xml",    "overlapping wire excitation"),
+    ("drude",   "selftest_drude.xml",   "Drude slab"),
+    ("lorentz", "selftest_lorentz.xml", "Lorentz slab with electric and magnetic poles"),
+    ("curr_z",  "selftest_curr.xml",    "magnetic source along z"),
+    ("sine",    "selftest_sine.xml",    "periodic excitation, Steady-State Detection"),
+    ("mur",     "selftest_mur.xml",     "Mur boundary"),
+]
+for _eng, _short in CPU_ENGINES.items():
+    for _name, _model, _note in CPU_MODELS:
+        CASES.append(Case("%s_%s" % (_short, _name), _model, {}, "cpu", _eng, 1e-4,
+                          "%s engine against the basic engine: %s" % (_eng, _note)))
 
 def default_exe(repo):
     return os.path.join(repo, "build", "openEMS.exe" if os.name == "nt" else "openEMS")
@@ -92,7 +114,32 @@ class Runner:
             self.basic[model] = (code == 0, d, speed(text), code)
         return self.basic[model]
 
+    def compare(self, bdir, cdir, tol):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = compare_runs.main(bdir, cdir, tol)
+        if self.verbose or rc != 0:
+            print("    " + buf.getvalue().replace("\n", "\n    ").rstrip())
+        return rc
+
+    def run_cpu(self, case):
+        """another CPU engine (case.arg) against the basic engine"""
+        ok_b, bdir, sp_b, code_b = self.basic_run(case.model)
+        if not ok_b:
+            return False, "the basic engine failed (exit code %d)" % code_b
+        cdir = os.path.join(self.work, case.name)
+        code, text = run_engine([self.exe], os.path.join(HERE, "models", case.model), case.arg, cdir,
+                                make_env(self.repo, case.env), self.timeout)
+        if code != 0:
+            return False, "the %s engine failed (exit code %d), see %s" % (case.arg, code, os.path.join(cdir, "run.log"))
+        rc = self.compare(bdir, cdir, case.tol)
+        sp = speed(text)
+        extra = "  (%.0f MCells/s %s, %.0f MCells/s basic)" % (sp, case.arg, sp_b) if sp and sp_b else ""
+        return rc == 0, "tolerance %g%s" % (case.tol, extra)
+
     def run(self, case):
+        if case.kind == "cpu":
+            return self.run_cpu(case)
         model_path = os.path.join(HERE, "models", case.model)
         cdir = os.path.join(self.work, case.name)
         code, text = run_engine([self.exe], model_path, "cuda", cdir, make_env(self.repo, case.env), self.timeout)
@@ -105,11 +152,7 @@ class Runner:
             return False, "the basic engine failed (exit code %d)" % code_b
         if code != 0:
             return False, "the CUDA engine failed (exit code %d), see %s" % (code, os.path.join(cdir, "run.log"))
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = compare_runs.main(bdir, cdir, case.tol)
-        if self.verbose or rc != 0:
-            print("    " + buf.getvalue().replace("\n", "\n    ").rstrip())
+        rc = self.compare(bdir, cdir, case.tol)
         sp = speed(text)
         extra = "  (%.0f MCells/s GPU, %.0f MCells/s CPU)" % (sp, sp_b) if sp and sp_b else ""
         return rc == 0, "tolerance %g%s" % (case.tol, extra)

@@ -1,7 +1,9 @@
 # Tests of the CUDA engine
 
 Regression tests that compare the CUDA engine with the CPU engine (`basic`) on small models, and check
-that the engine refuses or stops with a clear error where it should. They need a built `openEMS`, an
+that the engine refuses or stops with a clear error where it should. The cases `mt_*` compare the
+multithreaded CPU engine with `basic`, so that a CPU engine that silently skips the extensions cannot
+go unnoticed. They need a built `openEMS`, an
 NVIDIA GPU and Python 3 (standard library only). Nothing is installed or written outside this folder:
 the results go to `tests/cuda/work/`.
 
@@ -40,6 +42,7 @@ experiment cannot change a result. Exit code 0 means that all cases passed.
 | `kernel_selftest` | `selftest.xml` | `OPENEMS_CUDA_SELFTEST=20`: kernels against the CPU reference | exit code 0 |
 | `inject_fail` | `selftest.xml` | `OPENEMS_CUDA_TEST_FAIL_STEP=100`: error during the run | exit code 4, message |
 | `inject_nan` | `selftest.xml` | `OPENEMS_CUDA_TEST_NAN_STEP=150`: NaN is detected | exit code 4, message |
+| `mt_pec`, `mt_pml`, `mt_sheet`, `mt_wire`, `mt_drude`, `mt_lorentz`, `mt_curr_z`, `mt_sine`, `mt_mur` | the models of the cases above (`selftest*.xml`) | the multithreaded CPU engine (the default CPU engine of openEMS and RFsim) against `basic`: excitation, PML, sheet, dispersive materials, Steady-State and Mur must give the same probes. No CUDA run. Another CPU engine is added in `CPU_ENGINES` of `run_tests.py` | agree |
 
 "Agree" means: both engines finish, and in every probe file the largest difference is below the tolerance
 (1e-4 of the largest value; 5e-4 for `curr_x`, whose far probe has a weak signal).
