@@ -28,9 +28,20 @@ The dependencies are **not pinned**: the first build takes the current versions.
 After a successful build `stage_out.ps1` (called by `build_openems.ps1`, can also be run alone) collects the
 result into `build\out`, laid out like the official openEMS Windows package: `openEMS.exe`, `nf2ff.exe` and all
 runtime DLLs in the root (found by following the imports with `dumpbin`; an unknown DLL is an error), plus
-`include\`, `lib\`, `matlab\` and a `README.txt` with the revision. The folder is deleted and created again on
+`include\`, `lib\`, `matlab\`, `licenses\` and a `README.txt` with the revision. The folder is deleted and created again on
 every run. Not included, compared with the official package: AppCSXCAD, QCSXCAD, Qt, `sar_calc.exe`, `CTB`,
-`python`, `resources\phantoms`, `include\QCSXCAD`, `include\openEMS\arraylib`. The tests still use `build\`.
+`resources\phantoms`, `include\QCSXCAD`, `include\openEMS\arraylib`.
+
+`build.cmd` then runs `build_python.ps1`, which completes `build\out` into a package that can be copied to another
+computer as it is: `bin\` (a copy of the executables and DLLs, where RFsim looks for them) and `venv\Scripts\`
+(a private CPython from `third_party\python` with the wheels `CSXCAD` and `openEMS`, built from the same
+sources, and numpy, h5py, matplotlib). The Python of the computer is never used; the private one is downloaded on
+the first build (`fetch_python.ps1`, the newest Python 3.13, NuGet package `python`; the series can be changed with
+`OPENEMS_PY_SERIES`). It is a plain copy of Python, not a virtual environment, so it holds no path to another folder.
+`install_package.cmd [folder]` copies the package to a folder (default `C:\openEMS`) and checks it. The Python modules
+have the API of v0.0.35. `build.cmd` stops with a message if it is started in a window where a Visual Studio
+environment is already loaded: use a new plain cmd window for every build. The tests use `--exe build\out\openEMS.exe`
+(`third_party\python\python.exe tests\cuda\run_tests.py --exe build\out\openEMS.exe`).
 
 Linux (**not verified**: written without a Linux machine, no run so far): `./build.sh` and `./build_openems.sh`.
 Boost, HDF5, TinyXML and VTK come from the system packages (the script prints the `apt` line if they are
@@ -101,9 +112,9 @@ are checked after every call and at the end of every batch of time steps.
 
 ## Known limitations
 
-* **Base version v0.0.35.** The series RLC lumped element (`LEtype`) and `TimeStepFactor` of later
-  upstream versions are missing. A model that uses them gives a wrong result **without a warning**, on
-  the CPU engines of this fork as well. Do not compare such models with results from v0.0.36 or newer.
+* **Base version v0.0.35.** Features of later upstream versions are not included, on the CPU engines of this
+  fork as well. Models and scripts that rely on them are not supported; compare results with v0.0.36 or newer
+  only for models that do not use such features.
 * Mur ABC, TFSF and Steady-State Detection run only on the host (see "What runs where"); a periodic
   excitation therefore needs `OPENEMS_CUDA_ALLOW_HOST_EXT=1`.
 * Cylindrical coordinates are not supported (they used to be silently ignored; now refused).
@@ -158,8 +169,8 @@ fusion.
 
 ## Tests
 
-`tests/cuda/` holds the regression tests (19 cases: comparison with the CPU engine, refusals, error
-handling) and a runner for `compute-sanitizer`; see `tests/cuda/README.md`.
+`tests/cuda/` holds the regression tests (28 cases: comparison with the CPU engine, the multithreaded CPU engine
+against the basic one, refusals, error handling) and a runner for `compute-sanitizer`; see `tests/cuda/README.md`.
 
 ```
 python tests/cuda/run_tests.py

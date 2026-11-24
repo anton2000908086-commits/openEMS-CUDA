@@ -49,6 +49,27 @@ the fork is moved to a newer upstream version.
 * `build.cmd` and `build_openems.ps1` build the project and its dependencies into `third_party/`;
   no absolute paths, no changes to the sources by the script.
 
+## Multithreaded CPU engine (upstream file, first CUDA prototype)
+* `FDTD/engine_multithread.cpp` **[upstream file]**: in the thread loop the calls of the extensions
+  (`DoPreVoltageUpdates`, `DoPostVoltageUpdates`, `Apply2Voltages`, `DoPreCurrentUpdates`, `DoPostCurrentUpdates`,
+  `Apply2Current`) had been commented out by the first CUDA prototype (2022, commit `d90d5b5`). The multithreaded
+  engine, the default CPU engine, therefore ran without excitation, PML and every other extension: the fields
+  stayed zero and the end criterion never fired. Restored to the upstream code. The cases `mt_*` of
+  `tests/cuda/run_tests.py` guard against it.
+
+## Package, Python modules, tests
+* `build_python.ps1` (called by `build.cmd`) builds the wheels `CSXCAD` (from the CSXCAD checkout of
+  `third_party/src`) and `openEMS` (from `python/`, version `0.0.35+cuda`) and completes `build\out` with `bin\`
+  and `venv\Scripts\` (a private CPython and the wheels). `fetch_python.ps1` downloads that Python into
+  `third_party/python`; the Python of the computer is not used. `install_package.cmd` copies the package to a folder.
+* `stage_out.ps1` collects the license texts and the exact sources of the build into `licenses\`; `NOTICE.md` lists
+  the components and their licenses.
+* Python modules (`python/openEMS`): `np.float` and `np.int` in `ports.py` replaced (removed in NumPy 2);
+  the self-referencing `cimport` lines and an unused `cimport cython.numeric` removed (not accepted by Cython 3).
+* `build.cmd`: `setlocal`, a stop with a message if a Visual Studio environment is already loaded in the window
+  (the `PATH` grew with every start until `vcvarsall.bat` failed); a stray first line removed.
+* Tests: 9 cases `mt_*` compare the multithreaded CPU engine with `basic` (28 cases in total).
+
 ## Changes in upstream files
 | File | Change |
 |---|---|
@@ -56,6 +77,7 @@ the fork is moved to a newer upstream version.
 | `FDTD/CMakeLists.txt` **[upstream file]** | CUDA sources added to the build |
 | `openems.cpp` **[upstream file]** | CUDA includes, `NewEngineInterface` for the CUDA engine, error handling around the engine creation, refusal of cylindrical coordinates, NaN/Inf check of the energy |
 | `main.cpp` **[upstream file]** | `try/catch` around `SetupFDTD` and `RunFDTD`, exit codes 3 and 4 |
+| `FDTD/engine_multithread.cpp` **[upstream file]** | the six calls of the extensions in the thread loop restored (see "Multithreaded CPU engine") |
 | `FDTD/extensions/engine_ext_lorentzmaterial.cpp` **[upstream file]** | one index in the `Engine::BASIC` voltage update (see "Lorentz reference") |
 | `FDTD/extensions/operator_ext_{dispersive,excitation,lorentzmaterial,upml}.h` **[upstream file]** | one `friend class` line each, so that the GPU extensions can read the operator data |
 | `README`, `TODO` **[upstream file]** | a short pointer to this documentation; the open items of the CUDA engine appended to `TODO` |
