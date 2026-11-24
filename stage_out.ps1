@@ -10,6 +10,7 @@ param(
     [string]$Build     = $(Join-Path $PSScriptRoot 'build'),
     [string]$DepsRoot  = $(if ($env:OPENEMS_DEPS)       { $env:OPENEMS_DEPS }       else { Join-Path $PSScriptRoot 'third_party/deps' }),
     [string]$VcpkgRoot = $(if ($env:OPENEMS_VCPKG_ROOT) { $env:OPENEMS_VCPKG_ROOT } else { Join-Path $PSScriptRoot 'third_party/vcpkg' }),
+    [string]$SrcRoot   = $(if ($env:OPENEMS_SRC)        { $env:OPENEMS_SRC }        else { Join-Path $PSScriptRoot 'third_party/src' }),
     [string]$Nvcc      = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,7 @@ $Root      = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
 $Build     = [IO.Path]::GetFullPath($Build).TrimEnd('\','/')
 $DepsRoot  = [IO.Path]::GetFullPath($DepsRoot).TrimEnd('\','/')
 $VcpkgRoot = [IO.Path]::GetFullPath($VcpkgRoot).TrimEnd('\','/')
+$SrcRoot   = [IO.Path]::GetFullPath($SrcRoot).TrimEnd('\','/')
 $Out       = Join-Path $Build 'out'
 
 function Need([string]$path) {
@@ -133,6 +135,60 @@ foreach ($pat in 'CSXCAD*.lib', 'fparser*.lib') {
 if (-not (Test-Path -LiteralPath "$Root/matlab" -PathType Container)) { throw "stage_out: folder not found: $Root/matlab" }
 Copy-Item -LiteralPath "$Root/matlab" -Destination "$Out/matlab" -Recurse -Force
 
+# ---- licenses ------------------------------------------------------------------------------------------------------------
+# The package holds binaries of GPL / LGPL programs and of other libraries: their license texts travel with them.
+# A missing text of the main components is an error (such a package must not be published); the texts of the
+# libraries of vcpkg are collected as they are (each port keeps its own `copyright` file).
+$lic = "$Out/licenses"
+New-Item -ItemType Directory -Force "$lic/third-party" | Out-Null
+Copy-Item -LiteralPath (Need "$Root/COPYING") -Destination "$lic/openEMS-COPYING-GPLv3.txt" -Force
+Copy-Item -LiteralPath (Need "$Root/NOTICE.md") -Destination "$lic/NOTICE.md" -Force
+Copy-Item -LiteralPath (Need "$SrcRoot/CSXCAD/COPYING") -Destination "$lic/CSXCAD-COPYING-LGPLv3.txt" -Force
+Copy-Item -LiteralPath (Need "$SrcRoot/fparser/docs/lgpl.txt") -Destination "$lic/fparser-LGPLv3.txt" -Force
+Copy-Item -LiteralPath (Need "$SrcRoot/fparser/docs/gpl.txt") -Destination "$lic/fparser-GPLv3.txt" -Force
+$nports = 0
+$share = "$VcpkgRoot/installed/x64-windows/share"
+if (Test-Path -LiteralPath $share -PathType Container) {
+    foreach ($d in (Get-ChildItem -LiteralPath $share -Directory)) {
+        $c = Join-Path $d.FullName 'copyright'
+        if (Test-Path -LiteralPath $c -PathType Leaf) {
+            Copy-Item -LiteralPath $c -Destination "$lic/third-party/$($d.Name)-copyright.txt" -Force
+            $nports++
+        }
+    }
+}
+if ($nports -eq 0) { throw "stage_out: no 'copyright' files found under $share" }
+# the exact revisions that were built (the dependencies are not pinned), so that the sources can be found again
+function GitInfo([string]$dir, [string]$name) {
+    $h = 'unknown'; $u = 'unknown'
+    try {
+        $r = & git -C $dir rev-parse HEAD 2>$null;                  if ($LASTEXITCODE -eq 0 -and $r) { $h = "$r" }
+        $r = & git -C $dir config --get remote.origin.url 2>$null; if ($LASTEXITCODE -eq 0 -and $r) { $u = "$r" }
+    } catch { }
+    return ("{0,-12} {1}  commit {2}" -f $name, $u, $h)
+}
+$rootRev = 'unknown'
+try { $r = & git -C $Root describe --tags --always --dirty 2>$null; if ($LASTEXITCODE -eq 0 -and $r) { $rootRev = "$r" } } catch { }
+Set-Content -LiteralPath "$lic/SOURCES.txt" -Encoding ASCII -Value @(
+    "Sources of the binaries in this package (see NOTICE.md).",
+    "",
+    "openEMS-CUDA (this project, GPLv3): revision $rootRev",
+    (GitInfo $Root 'openEMS-CUDA'),
+    (GitInfo "$SrcRoot/CSXCAD" 'CSXCAD'),
+    (GitInfo "$SrcRoot/fparser" 'fparser'),
+    (GitInfo $VcpkgRoot 'vcpkg'),
+    "",
+    "The other libraries come from the ports of that vcpkg revision (source of every port: its portfile in",
+    "<vcpkg>/ports/<name> and the upstream project named in the file third-party/<name>-copyright.txt).",
+    "Python and its packages: https://www.python.org/ (NuGet package 'python') and https://pypi.org/ (wheels in venv)."
+)
+$cudaRoot = if ($Nvcc) { Split-Path -Parent (Split-Path -Parent $Nvcc) } elseif ($env:CUDA_PATH) { $env:CUDA_PATH } else { '' }
+if ($cudaRoot -and (Test-Path -LiteralPath "$cudaRoot/EULA.txt" -PathType Leaf)) {
+    Copy-Item -LiteralPath "$cudaRoot/EULA.txt" -Destination "$lic/NVIDIA-CUDA-EULA.txt" -Force
+} else {
+    Write-Warning "stage_out: the NVIDIA CUDA EULA (EULA.txt in the CUDA folder) was not found; copy it to $lic by hand"
+}
+
 # README
 $rev = 'unknown'
 try { $r = & git -C $Root describe --tags --always --dirty 2>$null; if ($LASTEXITCODE -eq 0 -and $r) { $rev = "$r" } } catch { }
@@ -145,10 +201,10 @@ $readme = @(
     "Details: FDTD_CUDA/README.md of the source tree.",
     "",
     "Compared with the official openEMS package this one has NO: AppCSXCAD.exe, QCSXCAD, Qt DLLs and plugins\",
-    "sar_calc.exe, CTB\, python\ (the Python interface is not built), resources\phantoms\,",
+    "sar_calc.exe, CTB\, python\ (see below: the Python side is bin\ and venv\Scripts\), resources\phantoms\,",
     "include\QCSXCAD, include\openEMS\arraylib. Everything else is laid out the same way."
 )
 Set-Content -LiteralPath "$Out/README.txt" -Value ($readme -join "`r`n") -Encoding ASCII
 
 $dllCount = @($files.Values | Where-Object { $_ -like '*.dll' }).Count
-Write-Host "Package folder: $Out  ($dllCount DLLs, include\, lib\, matlab\)"
+Write-Host "Package folder: $Out  ($dllCount DLLs, include\, lib\, matlab\, licenses\ with $nports library licenses)"

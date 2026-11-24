@@ -1,5 +1,5 @@
-uild_all.cmd
 @echo off
+setlocal
 rem Loads the MSVC v143 (14.44) + CUDA 12.2 environment and builds openEMS-CUDA.
 rem Run it from a PLAIN cmd window (Win+R, cmd), not from "Developer Command Prompt".
 rem Options: "clean" deletes the CMake build folder first, "compare" runs the CPU/CUDA comparison afterwards:
@@ -28,3 +28,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_python.ps1"
+if errorlevel 1 (
+    echo Python part failed. openEMS.exe in build\out is ready, but without the Python modules and the bin and venv folders.
+    echo The Python is downloaded to third_party\python on first use ^(needs internet^); see the messages above.
+    exit /b 1
+)
